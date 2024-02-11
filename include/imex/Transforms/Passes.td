@@ -138,5 +138,16 @@ def PropagatePackedLayout : Pass<"imex-propagate-packed-layout"> {
   ];
 }
 
+def HydrideArith : Pass<"hydride-arith"> {
+  let summary = "Hydride Arith Frontend";
+  let constructor = "imex::createHydrideArithPass()";
+  let dependentDialects = [
+    "::mlir::arith::ArithDialect",
+  ];
+  let options = [
+    Option<"synth_target", "synth_target", "std::string",
+           /*default=*/"", "The default target is x86">,
+  ];
+}
 
 #endif // _IMEX_TRANSFORMS_PASSES_TD_INCLUDED_

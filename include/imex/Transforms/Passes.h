@@ -31,6 +31,9 @@ std::unique_ptr<mlir::Pass> createRemoveTemporariesPass();
 std::unique_ptr<mlir::Pass> createVectorLinearizePass();
 std::unique_ptr<mlir::Pass> createPropagatePackedLayoutPass();
 
+/// Hydride Arith dialect frontend pass
+std::unique_ptr<mlir::Pass> createHydrideArithPass();
+
 #define GEN_PASS_DECL
 #include "imex/Transforms/Passes.h.inc"
 
