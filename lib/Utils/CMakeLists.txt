@@ -4,6 +4,7 @@ add_mlir_library(IMEXUtil
     TypeConversion.cpp
     XeCommon.cpp
     XeArch.cpp
+    HydrideUtils.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/imex/Utils

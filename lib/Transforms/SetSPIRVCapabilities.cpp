@@ -70,6 +70,7 @@ public:
         spirv::Capability::ExpectAssumeKHR,
         spirv::Capability::VectorAnyINTEL,
         // clang-format on
+        spirv::Capability::VectorComputeINTEL
     };
     spirv::Capability caps_vulkan[] = {
         // clang-format off
