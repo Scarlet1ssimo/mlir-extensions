@@ -17,6 +17,7 @@
 #include "imex/Conversion/XeGPUToSPIRV/XeGPUToSPIRV.h"
 
 #include "../PassDetail.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 
 #include <llvm/ADT/ArrayRef.h>
 #include <llvm/Support/Debug.h>
@@ -175,6 +176,44 @@ void populateGPUPrintfToSPIRVPatterns(mlir::SPIRVTypeConverter &typeConverter,
                                       mlir::RewritePatternSet &patterns) {
 
   patterns.add<PrintfOpPattern>(typeConverter, patterns.getContext());
+}
+
+class LLVMCallPattern : public mlir::OpConversionPattern<mlir::LLVM::CallOp> {
+public:
+  using mlir::OpConversionPattern<mlir::LLVM::CallOp>::OpConversionPattern;
+  mlir::LogicalResult
+  matchAndRewrite(mlir::LLVM::CallOp llvmCallOp, OpAdaptor adaptor,
+                  mlir::ConversionPatternRewriter &rewriter) const override {
+
+    rewriter.eraseOp(llvmCallOp);
+    auto resultType =
+        getTypeConverter()->convertType(llvmCallOp.getResult().getType());
+    if (!resultType)
+      return mlir::failure();
+    rewriter.replaceOpWithNewOp<mlir::spirv::FunctionCallOp>(
+        llvmCallOp, resultType, adaptor.getOperands(), llvmCallOp->getAttrs());
+
+    return mlir::success();
+  }
+};
+class LLVMFuncPattern
+    : public mlir::OpConversionPattern<mlir::LLVM::LLVMFuncOp> {
+public:
+  using mlir::OpConversionPattern<mlir::LLVM::LLVMFuncOp>::OpConversionPattern;
+  mlir::LogicalResult
+  matchAndRewrite(mlir::LLVM::LLVMFuncOp llvmFuncOp, OpAdaptor adaptor,
+                  mlir::ConversionPatternRewriter &rewriter) const override {
+
+    rewriter.eraseOp(llvmFuncOp);
+
+    return mlir::success();
+  }
+};
+
+void populateLLVMCallToSPIRVPatterns(mlir::SPIRVTypeConverter &typeConverter,
+                                     mlir::RewritePatternSet &patterns) {
+  patterns.add<LLVMCallPattern>(typeConverter, patterns.getContext());
+  patterns.add<LLVMFuncPattern>(typeConverter, patterns.getContext());
 }
 
 void GPUXToSPIRVPass::runOnOperation() {
@@ -344,6 +383,7 @@ void GPUXToSPIRVPass::runOnOperation() {
     mlir::cf::populateControlFlowToSPIRVPatterns(typeConverter, patterns);
     mlir::populateMathToSPIRVPatterns(typeConverter, patterns);
     imex::populateGPUPrintfToSPIRVPatterns(typeConverter, patterns);
+    imex::populateLLVMCallToSPIRVPatterns(typeConverter, patterns);
 
     if (this->enableVCIntrinsic)
       imex::populateXeGPUToVCIntrinsicsPatterns(typeConverter, patterns);

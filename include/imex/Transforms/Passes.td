@@ -142,7 +142,7 @@ def HydrideArith : Pass<"hydride-arith"> {
   let summary = "Hydride Arith Frontend";
   let constructor = "imex::createHydrideArithPass()";
   let dependentDialects = [
-    "::mlir::arith::ArithDialect",
+    "mlir::LLVM::LLVMDialect",
   ];
   let options = [
     Option<"synth_target", "synth_target", "std::string",

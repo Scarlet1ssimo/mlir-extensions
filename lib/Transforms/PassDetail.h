@@ -46,6 +46,8 @@ class VectorDialect;
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SPIRV/IR/SPIRVDialect.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+
 
 namespace imex {
 #define GEN_PASS_CLASSES
