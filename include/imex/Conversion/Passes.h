@@ -15,6 +15,7 @@
 #ifndef _IMEX_CONVERSION_PASSES_H_INCLUDED_
 #define _IMEX_CONVERSION_PASSES_H_INCLUDED_
 
+#include <imex/Conversion/VectorToXeGPU/VectorToXeGPU.h>
 #include "mlir/Pass/Pass.h"
 
 #include <imex/Conversion/DistToStandard/DistToStandard.h>
