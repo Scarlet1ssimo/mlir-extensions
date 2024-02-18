@@ -68,6 +68,7 @@ public:
         gpuFunc->setAttr("VectorComputeFunctionINTEL",
                          mlir::UnitAttr::get(context));
         gpuFunc->setAttr(attrName, abi);
+        gpuFunc->setAttr("VectorComputeFunctionINTEL", mlir::UnitAttr::get(context));
       }
     } else if (m_clientAPI == "vulkan") {
       auto abi = mlir::spirv::getEntryPointABIAttr(context, {1, 1, 1});

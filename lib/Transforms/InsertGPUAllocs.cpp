@@ -18,6 +18,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "llvm/Support/Threading.h"
 #include <imex/Transforms/Passes.h>
 
@@ -144,6 +145,10 @@ public:
         return {{load.getMemref()}};
       } else if (auto store = mlir::dyn_cast<mlir::memref::StoreOp>(op)) {
         return {{store.getMemref()}};
+      } else if (auto transfer_read=mlir::dyn_cast<mlir::vector::TransferReadOp>(op)) {
+        return {{transfer_read.getSource()}};
+      } else if (auto transfer_write=mlir::dyn_cast<mlir::vector::TransferWriteOp>(op)) {
+        return {{transfer_write.getSource()}};
       }
       // This case checks if a mlir func call within the gpu.launch has
       // operands which have memref as operands.It just collects them and checks
