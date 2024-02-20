@@ -113,7 +113,7 @@ public:
 
   std::string get_synthlog_hash_filepath(int id) {
     if (id < 0) {
-      const char *initial_hash = getenv(" HYDRIDE_INITIAL_HASH");
+      const char *initial_hash = getenv("HYDRIDE_INITIAL_HASH");
       if (initial_hash) {
         return std::string(initial_hash) + ".rkt";
 
@@ -140,147 +140,69 @@ public:
     }
   }
 
-  std::string define_load_buffer(vector::LoadOp op) {
-    // std::string reg_name = "reg_";
-    std::string reg_name = "reg_" + std::to_string(LoadToRegMap[op]);
-    std::string id_name = std::to_string(LoadToRegMap[op]);
-    size_t bitwidth = 0;
-    std::string define_bitvector_str;
-    std::string define_buffer_str;
-    auto vecType = op.getResult().getType().dyn_cast<VectorType>();
-    std::string elemT = "'";
-    if (vecType && vecType.getElementType()) {
-      bitwidth = vecType.getElementTypeBitWidth() * vecType.getNumElements();
-      elemT += mlir_type_to_synth_elem(vecType.getElementType(), false, true);
-      unsigned rank = vecType.getRank();
-
-      define_bitvector_str = "(define " + reg_name + "_tensor" + " " +
-                             "(bv 0 (bitvector " + std::to_string(bitwidth) +
-                             ")" + "))";
-
-      // todo: mlir interpreter for create-buffer
-      define_buffer_str = "(define " + reg_name + " (arith:create-tensor " +
-                          reg_name + "_tensor " + "(vector";
-
-      for (unsigned d = 0; d < rank; d++) {
-        define_buffer_str += " " + std::to_string(vecType.getShape()[d]);
-      }
-
-      define_buffer_str += ") ";
-      define_buffer_str += "(vector";
-
-      for (unsigned d = 0; d < rank; d++) {
-        define_buffer_str += " " + std::to_string(d);
-      }
-
-      define_buffer_str += ") ";
-
-      define_buffer_str += elemT + " ";
-      define_buffer_str += id_name + ")" + ")";
-    } else {
-      define_bitvector_str = "(define " + reg_name + "_bitvector" + " " +
-                             "(bv 0 (bitvector " + std::to_string(bitwidth) +
-                             ")" + "))";
-
-      // todo: mlir interpreter for create-buffer
-      define_buffer_str = "(define " + reg_name + " (arith:create-buffer " +
-                          reg_name + "_bitvector " + elemT + ")" + ")";
-    }
-
-    if (elemT == "'") {
-      return "";
-    }
-
-    return define_bitvector_str + "\n" + define_buffer_str;
-  }
-
-  std::string define_transfer_buffer(vector::TransferReadOp op) {
-    // std::string reg_name = "reg_"
-
-    std::string reg_name = "reg_" + std::to_string(TransferReadToRegMap[op]);
-    std::string id_name = std::to_string(TransferReadToRegMap[op]);
-    size_t bitwidth = 0;
-    std::string define_bitvector_str;
-    std::string define_buffer_str;
-    auto vecType = op.getVector().getType().dyn_cast<VectorType>();
-    std::string elemT = "'";
-    if (vecType && vecType.getElementType()) {
-      bitwidth = vecType.getElementTypeBitWidth() * vecType.getNumElements();
-      elemT += mlir_type_to_synth_elem(vecType.getElementType(), false, true);
-      unsigned rank = vecType.getRank();
-
-      define_bitvector_str = "(define " + reg_name + "_tensor" + " " +
-                             "(bv 0 (bitvector " + std::to_string(bitwidth) +
-                             ")" + "))";
-
-      // todo: mlir interpreter for create-buffer
-      define_buffer_str = "(define " + reg_name + " (arith:create-tensor " +
-                          reg_name + "_tensor " + "(vector";
-
-      for (unsigned d = 0; d < rank; d++) {
-
-        define_buffer_str += " " + std::to_string(vecType.getShape()[d]);
-      }
-
-      define_buffer_str += ") ";
-
-      define_buffer_str += "(vector";
-
-      for (unsigned d = 0; d < rank; d++) {
-
-        define_buffer_str += " " + std::to_string(d);
-      }
-
-      define_buffer_str += ") ";
-
-      define_buffer_str += elemT + " ";
-      define_buffer_str += id_name + ")" + ")";
-    } else {
-      define_bitvector_str = "(define " + reg_name + "_bitvector" + " " +
-                             "(bv 0 (bitvector " + std::to_string(bitwidth) +
-                             ")" + "))";
-
-      // todo: mlir interpreter for create-buffer
-      define_buffer_str = "(define " + reg_name + " (arith:create-buffer " +
-                          reg_name + "_bitvector " + elemT + ")" + ")";
-    }
-
-    if (elemT == "'") {
-      return "";
-    }
-
-    return define_bitvector_str + "\n" + define_buffer_str;
-  }
-
-  //>>>>>>>>>>>>>>>>> Hydride Decls
-  std::string define_variable_buffer(void *val_ptr) {
-    // std::string reg_name = "reg_";
-    auto val = Value::getFromOpaquePointer(val_ptr);
-    std::string reg_name = "reg_" + std::to_string(VariableToRegMap[val_ptr]);
-    size_t bitwidth = 0;
-    auto vecType = val.getType().dyn_cast<VectorType>();
-    std::string elemT = "'";
-    if (vecType && vecType.getElementType()) {
-      bitwidth = vecType.getElementTypeBitWidth() * vecType.getNumElements();
-      elemT = mlir_type_to_synth_elem(vecType.getElementType(), false, true);
-    }
-
-    if (elemT == "'") {
-      /* llvm::errs() << "Define_variable_buffer escaping early for " <<
-         reg_name
-                   << "of bitwidth " << bitwidth << "\n"; */
-      return "";
-    }
-
+  std::string define_buffer(const std::string &reg_name, const std::string &id_name, size_t bitwidth, const std::string &elemT, unsigned rank, const std::vector<unsigned> &shape) {
     std::string define_bitvector_str = "(define " + reg_name + "_tensor" + " " +
                                        "(bv 0 (bitvector " +
                                        std::to_string(bitwidth) + ")" + "))";
 
     std::string define_buffer_str = "(define " + reg_name +
-                                    " (arith:create-buffer " + reg_name +
-                                    "_tensor " + elemT + ")" + ")";
+                                    " (arith:create-tensor " + reg_name +
+                                    "_tensor " + "(vector";
+
+    for (unsigned d = 0; d < rank; d++) {
+      define_buffer_str += " " + std::to_string(shape[d]);
+    }
+
+    define_buffer_str += ") ";
+
+    define_buffer_str += "(vector";
+
+    for (unsigned d = 0; d < rank; d++) {
+      define_buffer_str += " " + std::to_string(d);
+    }
+
+    define_buffer_str += ") ";
+
+    define_buffer_str += elemT + " ";
+    define_buffer_str += id_name + ")" + ")";
 
     return define_bitvector_str + "\n" + define_buffer_str;
+  }
+
+  std::string define_buffer_common(const std::string &reg_name, const std::string &id_name, Type type) {
+    std::string elemT = "'";
+    size_t bitwidth = 0;
+    unsigned rank = 0;
+    std::vector<unsigned> shape;
+
+    auto vecType = type.dyn_cast<VectorType>();
+    if (vecType && vecType.getElementType()) {
+      bitwidth = vecType.getElementTypeBitWidth() * vecType.getNumElements();
+      elemT += mlir_type_to_synth_elem(vecType.getElementType(), false, true);
+      rank = vecType.getRank();
+      shape = std::vector<unsigned>(vecType.getShape().begin(), vecType.getShape().end());
+    }
+
+    return define_buffer(reg_name, id_name, bitwidth, elemT, rank, shape);
+  }
+
+  std::string define_load_buffer(vector::LoadOp op) {
+    std::string reg_name = "reg_" + std::to_string(LoadToRegMap[op]);
+    std::string id_name = std::to_string(LoadToRegMap[op]);
+    return define_buffer_common(reg_name, id_name, op.getResult().getType());
+  }
+
+  std::string define_transfer_buffer(vector::TransferReadOp op) {
+    std::string reg_name = "reg_" + std::to_string(TransferReadToRegMap[op]);
+    std::string id_name = std::to_string(TransferReadToRegMap[op]);
+    return define_buffer_common(reg_name, id_name, op.getVector().getType());
+  }
+
+  std::string define_variable_buffer(void *val_ptr) {
+    auto val = Value::getFromOpaquePointer(val_ptr);
+    std::string reg_name = "reg_" + std::to_string(VariableToRegMap[val_ptr]);
+    std::string id_name = std::to_string(VariableToRegMap[val_ptr]);
+    return define_buffer_common(reg_name, id_name, val.getType());
   }
 
   std::string get_reg_id(int reg_id) {
@@ -365,13 +287,13 @@ public:
 
   std::string emit_racket_imports() {
     return "#lang rosette\n \
-                            (require rosette/lib/synthax)\n \
-                            (require rosette/lib/angelic)\n \
-                            (require racket/pretty)\n \
-                            (require data/bit-vector)\n \
-                            (require rosette/lib/destruct)\n \
-                            (require rosette/solver/smt/boolector)\n \
-                            (require hydride)\n ";
+(require rosette/lib/synthax)\n \
+(require rosette/lib/angelic)\n \
+(require racket/pretty)\n \
+(require data/bit-vector)\n \
+(require rosette/lib/destruct)\n \
+(require rosette/solver/smt/boolector)\n \
+(require hydride)\n ";
   }
 
   std::string emit_hydride_synthesis(std::string expr_name, size_t expr_depth,
@@ -427,7 +349,7 @@ public:
 // util functions
 
 struct HydrideArithPass : public HydrideArithBase<HydrideArithPass> {
-  
+
   std::map<unsigned, void *> RegToVariableMap;
   std::map<void *, unsigned> VariableToRegMap;
 
@@ -919,9 +841,9 @@ void HydrideArithPass::runOnOperation() {
   // Compute the operation statistics for the currently visited operation.
   this->mainGPUModule->walk([&](gpu::GPUFuncOp funcOp) {
     curr_func_name = funcOp.getName().str();
-    llvm::errs()<<"curr_func_name: "<<curr_func_name<<"\n";
+    llvm::errs() << "curr_func_name: " << curr_func_name << "\n";
     funcOp.walk([&](Operation *op) {
-      llvm::errs()<<*op<<"\n";
+      llvm::errs() << *op << "\n";
       if (auto returnOp = dyn_cast<gpu::ReturnOp>(op)) {
         RootExprOp.push(op);
       }
@@ -988,7 +910,8 @@ void HydrideArithPass::runOnOperation() {
     //     rewriter.setInsertionPoint(returnOp);
     //     Location loc = returnOp->getLoc();
     //     auto callOp = rewriter.create<LLVM::CallOp>(
-    //         loc, TypeRange(operand.getType()), sym_ref, ValueRange(args_vec));
+    //         loc, TypeRange(operand.getType()), sym_ref,
+    //         ValueRange(args_vec));
     //     operand.replaceAllUsesWith(callOp.getResult());
     //     expr_id++;
     //   }
@@ -1054,7 +977,6 @@ void HydrideArithPass::runOnOperation() {
         args_vec[reg.first] = val;
       }
 
-
       MLIRContext *ctx = transferWriteOp.getContext();
       MyPatternRewriter rewriter(ctx);
 
@@ -1092,9 +1014,9 @@ void HydrideArithPass::runOnOperation() {
     LoadToRegMap.clear();
     RootExprOp.pop();
   }
-  llvm::errs()<<"--------------------------------\n";
-  llvm::errs()<<"Hydride Synthesis Complete\n";
-  llvm::errs()<<*this->mainGPUModule<<"\n";
+  llvm::errs() << "--------------------------------\n";
+  llvm::errs() << "Hydride Synthesis Complete\n";
+  llvm::errs() << *this->mainGPUModule << "\n";
 }
 
 FlatSymbolRefAttr HydrideArithPass::getOrInsertHydrideFunc(
@@ -1116,35 +1038,35 @@ FlatSymbolRefAttr HydrideArithPass::getOrInsertHydrideFunc(
   // Insert the printf function into the body of the parent module.
   PatternRewriter::InsertionGuard insertGuard(rewriter);
   rewriter.setInsertionPointToStart(module.getBody());
-  auto newFuncOp = rewriter.create<spirv::FuncOp>(module.getLoc(), func_name,
-                                              spirvFnType);
-                                              
+  auto newFuncOp =
+      rewriter.create<spirv::FuncOp>(module.getLoc(), func_name, spirvFnType);
+
   newFuncOp->setAttr("VectorComputeFunctionINTEL", rewriter.getUnitAttr());
   auto linkageTypeAttr =
-        rewriter.getAttr<spirv::LinkageTypeAttr>(spirv::LinkageType::Import);
+      rewriter.getAttr<spirv::LinkageTypeAttr>(spirv::LinkageType::Import);
   auto nameAttr = StringAttr::get(rewriter.getContext(), func_name);
   auto linkage = spirv::LinkageAttributesAttr::get(rewriter.getContext(),
-                                                     nameAttr, linkageTypeAttr);
+                                                   nameAttr, linkageTypeAttr);
   newFuncOp.setLinkageAttributesAttr(linkage);
   return SymbolRefAttr::get(context, func_name);
 }
 
 std::string HydrideArithPass::MLIRValVisit(Value val) {
-    void *valAsOpaquePointer = val.getAsOpaquePointer();
+  void *valAsOpaquePointer = val.getAsOpaquePointer();
   auto valDefiningOp = val.getDefiningOp();
   if (valDefiningOp != NULL) {
-        if (valDefiningOp->getDialect() != NULL) {
-            if (valDefiningOp->getDialect()->getNamespace() == "arith") {
-                return MLIRArithOpVisit(valDefiningOp);
+    if (valDefiningOp->getDialect() != NULL) {
+      if (valDefiningOp->getDialect()->getNamespace() == "arith") {
+        return MLIRArithOpVisit(valDefiningOp);
       } else if (valDefiningOp->getDialect()->getNamespace() == "vector") {
-                return MLIRVectorOpVisit(valDefiningOp);
+        return MLIRVectorOpVisit(valDefiningOp);
       } else {
-                if (VariableToRegMap.find(valDefiningOp) != VariableToRegMap.end()) {
-                    std::string reg_name =
+        if (VariableToRegMap.find(valDefiningOp) != VariableToRegMap.end()) {
+          std::string reg_name =
               "reg_" + std::to_string(VariableToRegMap[valDefiningOp]);
           return reg_name;
         }
-        
+
         unsigned reg_counter =
             (RegToLoadMap.size() + RegToTransferReadMap.size() +
              RegToVariableMap.size());
@@ -1158,15 +1080,15 @@ std::string HydrideArithPass::MLIRValVisit(Value val) {
       }
     }
   }
-  
+
   if (val.isa<BlockArgument>()) {
-    
+
     if (VariableToRegMap.find(valAsOpaquePointer) != VariableToRegMap.end()) {
-            std::string reg_name =
+      std::string reg_name =
           "reg_" + std::to_string(VariableToRegMap[valAsOpaquePointer]);
       return reg_name;
     }
-    
+
     unsigned reg_counter = (RegToLoadMap.size() + RegToTransferReadMap.size() +
                             RegToVariableMap.size());
 
@@ -1177,7 +1099,7 @@ std::string HydrideArithPass::MLIRValVisit(Value val) {
 
     return reg_name; // op->name;
   }
-  
+
   return "";
 }
 
