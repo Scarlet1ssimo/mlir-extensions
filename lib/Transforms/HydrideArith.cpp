@@ -33,21 +33,11 @@
 #include "llvm/Support/Format.h"
 #include "llvm/Support/ToolOutputFile.h"
 #include "llvm/Support/raw_ostream.h"
+
 #include <queue>
 
 using namespace mlir;
 using namespace imex;
-
-/* std::map<unsigned, void *> RegToVariableMap;
-std::map<void *, unsigned> VariableToRegMap;
-
-std::map<unsigned, vector::LoadOp> RegToLoadMap;
-std::map<vector::LoadOp, unsigned> LoadToRegMap;
-
-std::map<unsigned, vector::TransferReadOp> RegToTransferReadMap;
-std::map<vector::TransferReadOp, unsigned> TransferReadToRegMap;
-
-std::queue<Operation *> RootExprOp; */
 
 unsigned op_lanes = 0;
 
@@ -361,9 +351,21 @@ struct HydrideArithPass : public HydrideArithBase<HydrideArithPass> {
 
   std::queue<Operation *> RootExprOp;
 
-  HydrideArithPass() = default;
+  bool DisableSynth = false;
+  bool DisableLegalize = false;
 
-  explicit HydrideArithPass(std::string synth_target) {
+  HydrideArithPass() {
+    if (getenv("HYDRIDE_DISABLE_SYNTH")) {
+      llvm::errs() << "Disabling Synthesis... This will lead to linking with old files.\n";
+      DisableSynth = true;
+    }
+    if (getenv("HYDRIDE_DISABLE_LEGALIZE")) {
+      llvm::errs() << "Disabling Synthesis\n";
+      DisableLegalize = true;
+    }
+  }
+
+  explicit HydrideArithPass(std::string synth_target) :HydrideArithPass() {
     this->synth_target = synth_target;
   }
 
@@ -373,6 +375,8 @@ struct HydrideArithPass : public HydrideArithBase<HydrideArithPass> {
   // Print summary of op stats.
   void EmitSynthesis(std::string benchmark_name, std::string expr,
                      unsigned expr_id);
+
+  void EmitLLVMCode();
 
   FlatSymbolRefAttr getOrInsertHydrideFunc(MyPatternRewriter &rewriter,
                                            gpu::GPUModuleOp module, int expr_id,
@@ -1016,6 +1020,7 @@ void HydrideArithPass::runOnOperation() {
   }
   llvm::errs() << "--------------------------------\n";
   llvm::errs() << "Hydride Synthesis Complete\n";
+  EmitLLVMCode();
   llvm::errs() << *this->mainGPUModule << "\n";
 }
 
@@ -1285,10 +1290,55 @@ std::string HydrideArithPass::MLIRVectorOpVisit(Operation *op) {
   // return "";
 }
 
+void HydrideArithPass::EmitLLVMCode() {
+  const char *benchmark_name = getenv("HYDRIDE_BENCHMARK");
+  assert(benchmark_name && "HYDRIDE_BENCHMARK environment variable must be "
+                           "defined for hydride llvm code-gen");
+
+  const char *hydride_src = getenv("HYDRIDE_ROOT");
+  assert(hydride_src &&
+         "HYDRIDE_ROOT environment variable needs to be defined for codegen");
+
+  const char *legalizer_so = getenv("LEGALIZER_PATH");
+  assert(legalizer_so && "LEGALIZER_PATH environment variable must be defined "
+                         "for hydride codegen");
+
+  const char *intrin_wrapper = getenv("INTRINSICS_LL");
+  assert(intrin_wrapper &&
+         "INTRINSICS_LL must be defined for hydride llvm code-gen");
+
+  std::string codegen_script_path =
+      std::string(hydride_src) +
+      "/codegen-generator/tools/low-level-codegen/RoseLowLevelCodeGen.py";
+  std::string input_file = "/tmp/" + std::string(benchmark_name) + ".rkt";
+  std::string output_file = "/tmp/" + std::string(benchmark_name) + ".ll";
+  // python3 $HYDRIDE_ROOT/codegen-generator/tools/low-level-codegen/RoseLowLevelCodeGen.py /tmp/forward_kernel.rkt $HYDRIDE_ROOT/codegen-generator/tools/low-level-codegen/InstSelectors/visa/build/libVISALegalizer.so $HYDRIDE_ROOT/codegen-generator/tools/low-level-codegen/InstSelectors/visa/visa_wrapper.ll -visa-hydride-legalize /tmp/forward_kernel.ll
+  std::string cmd = "HYDRIDE_VISA_FLAG=1 python3 " + codegen_script_path + " " + input_file + " " +
+                    std::string(legalizer_so) + " " +
+                    std::string(intrin_wrapper) + " -visa-hydride-legalize " +
+                    output_file;
+  llvm::errs() << "About to execute" << cmd << "\n";
+  if (!DisableLegalize) {
+    auto start = std::chrono::system_clock::now();
+
+    int ret_code = system(cmd.c_str());
+
+    assert(ret_code == 0 && "Codegeneration crashed, exiting ...");
+
+    auto end = std::chrono::system_clock::now();
+    llvm::errs() << "Compilation completed with return code:\t" << ret_code
+                 << "\n";
+
+    std::chrono::duration<double> elapsed_seconds = end - start;
+
+    llvm::errs() << "Compilation took " << elapsed_seconds.count()
+                 << " seconds ..."
+                 << "\n";
+  }
+}
+
 void HydrideArithPass::EmitSynthesis(std::string benchmark_name,
                                      std::string expr, unsigned expr_id) {
-
-  // dummy becnhamrk name
   HydrideSynthEmitter HSE(benchmark_name, LoadToRegMap, VariableToRegMap,
                           TransferReadToRegMap);
   std::string errorMessage;
@@ -1356,6 +1406,23 @@ void HydrideArithPass::EmitSynthesis(std::string benchmark_name,
 
   file->os() << out_str;
   file->keep();
+  // close file
+  file->os().close();
+
+  std::string cmd = "racket " + outputFilename;
+  llvm::errs() << "About to execute" << cmd << "\n";
+  if(!DisableSynth){
+    auto start = std::chrono::system_clock::now();
+    int ret_code = system(cmd.c_str());
+    auto end = std::chrono::system_clock::now();
+    assert(ret_code == 0&& "Synthesis crashed, exiting ...");
+    llvm::errs() << "Synthesis completed with return code:\t" << ret_code << "\n";
+
+    std::chrono::duration<double> elapsed_seconds = end - start;
+    llvm::errs() << "Synthesis took " << elapsed_seconds.count()
+                 << "seconds ..."
+                 << "\n";
+  }
 
   expr_id++;
   op_lanes = 0;
