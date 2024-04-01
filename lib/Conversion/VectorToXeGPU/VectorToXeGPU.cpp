@@ -27,6 +27,7 @@
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/Interfaces/VectorInterfaces.h"
+#include "mlir/Support/LogicalResult.h"
 
 using namespace mlir;
 
@@ -62,6 +63,8 @@ struct MyTarget : public ConversionTarget {
 // %4 = xegpu.load_nd %3 {mode = vc}: !xegpu.tensor_desc<32xf32> ->
 //   vector<32xf32>
 // %5 = vector.shape_cast %4 : vector<1x32xf32> to vector<32xf32>
+
+// %6 = vector.shuffle %5, %5[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0] : vector<16xi32>, vector<16xi32>
 // ```
 
 struct TransferReadOpConverter
@@ -88,8 +91,7 @@ struct TransferReadOpConverter
       <block argument> of type 'i32' at index: 2
       */
     }
-    // auto map = read.getPermutationMap();
-    // llvm::errs() << __LINE__ << ": " << map << "\n";
+    
 
     auto tDescTy = xegpu::TensorDescType::get({1, resTileShape[0]},
                                               resTileType.getElementType());
@@ -110,10 +112,30 @@ struct TransferReadOpConverter
     auto load = rewriter.create<xegpu::LoadNDOp>(
         read.getLoc(), intermediateType, desc, vnniAxisAttr, transposeAttr, L1, L2,
         L3, imex::xegpu::Mode::VC);
-    auto cast = rewriter.create<vector::ShapeCastOp>(read.getLoc(), resTileType,
+    
+    auto cast= rewriter.create<vector::ShapeCastOp>(read.getLoc(), resTileType,
                                                      load->getResults());
+    Operation *payload = cast;
+    if (auto map = read.getPermutationMap(); map.isSingleConstant()){
+      llvm::errs() << __LINE__ << ": " << map << "\n";
+      SmallVector<int64_t> mask(resTileShape[0], map.getSingleConstantResult());
+      payload = rewriter.create<vector::ShuffleOp>(read.getLoc(),
+                                                   cast, cast, mask);
+    } else {
+      AffineExpr d0, d1;
+      bindDims(read.getContext(), d0, d1);
+      auto mp = AffineMap::get(map.getNumDims(), 0, {d1}, read.getContext());
+      //(d0, d1) -> (d1)
+      llvm::errs() << "map: " << map << "\n";
+      llvm::errs() << "mp: " << mp << "\n";
+      llvm::errs() << "map == mp: " << (map == mp) << "\n";
+      if (map != mp) {
+        llvm::errs() << "Unsupported permutation map\n";
+        return ::mlir::failure();
+      }
+    }
     llvm::errs() << "end----------------------\n";
-    rewriter.replaceOp(read, cast->getResults());
+    rewriter.replaceOp(read, payload->getResults());
     return ::mlir::success();
   }
 };
