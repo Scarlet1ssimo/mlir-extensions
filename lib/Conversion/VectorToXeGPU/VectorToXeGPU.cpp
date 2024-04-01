@@ -25,6 +25,7 @@
 #include "mlir/Dialect/SPIRV/Transforms/SPIRVConversion.h"
 #include "mlir/Dialect/Vector/Transforms/VectorRewritePatterns.h"
 #include "mlir/IR/Attributes.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/Interfaces/VectorInterfaces.h"
 
 using namespace mlir;
@@ -54,10 +55,14 @@ struct MyTarget : public ConversionTarget {
 
 // Goal: vector.transfer_read -> xegpu.create_nd_tdesc + xegpu.load_nd
 // E.g.
+// ```
 // %3 = vector.transfer_read %arg1[%0, %2], %arg2 : memref<512x640xf32>,
-// vector<32xf32> to %desc = xegpu.create_nd_tdesc %arg1[%0, %2] {mode = vc} :
-// memref<512x640xf32> -> !xegpu.tensor_desc<32xf32> %3 = xegpu.load_nd %desc
-// {mode = vc}: !xegpu.tensor_desc<32xf32> -> vector<32xf32>
+//   vector<1x32xf32> to %desc = xegpu.create_nd_tdesc %arg1[%0, %2] {mode = vc}
+//   : memref<512x640xf32> -> !xegpu.tensor_desc<32xf32>
+// %4 = xegpu.load_nd %3 {mode = vc}: !xegpu.tensor_desc<32xf32> ->
+//   vector<32xf32>
+// %5 = vector.shape_cast %4 : vector<1x32xf32> to vector<32xf32>
+// ```
 
 struct TransferReadOpConverter
     : public OpRewritePattern<vector::TransferReadOp> {
@@ -67,10 +72,12 @@ struct TransferReadOpConverter
     auto resultTile = read.getResult();
     auto resTileType = resultTile.getType();
     auto resTileShape = resTileType.getShape();
+    auto intermediateType = VectorType::get({1, resTileShape[0]}, resTileType.getElementType());
     auto source = read.getSource();
     llvm::errs() << "----------------------\n";
     llvm::errs() << __LINE__ << ": " << resultTile << "\n"; // %3 = ...
     llvm::errs() << __LINE__ << ": " << resTileType << "\n"; // vector<32xf32>
+    llvm::errs() << __LINE__ << ": " << intermediateType << "\n"; // vector<1x32xf32>
     llvm::errs() << __LINE__ << ": " << source << "\n";//memref<512x640xf32>
     for (auto op : read->getOperands()) {
       llvm::errs() << __LINE__ << ": " << op << "\n";
@@ -81,8 +88,10 @@ struct TransferReadOpConverter
       <block argument> of type 'i32' at index: 2
       */
     }
+    // auto map = read.getPermutationMap();
+    // llvm::errs() << __LINE__ << ": " << map << "\n";
 
-    auto tDescTy = xegpu::TensorDescType::get({resTileShape[0]},
+    auto tDescTy = xegpu::TensorDescType::get({1, resTileShape[0]},
                                               resTileType.getElementType());
     mlir::SmallVector<mlir::OpFoldResult> tDescOffsets{read->getOperand(1),
                                                        read->getOperand(2)};
@@ -99,18 +108,21 @@ struct TransferReadOpConverter
     auto L3 = xegpu::CacheReadHintAttr::get(read.getContext(),
                                             xegpu::CacheReadHint::CACHED);
     auto load = rewriter.create<xegpu::LoadNDOp>(
-        read.getLoc(), resTileType, desc, vnniAxisAttr, transposeAttr, L1, L2,
+        read.getLoc(), intermediateType, desc, vnniAxisAttr, transposeAttr, L1, L2,
         L3, imex::xegpu::Mode::VC);
+    auto cast = rewriter.create<vector::ShapeCastOp>(read.getLoc(), resTileType,
+                                                     load->getResults());
     llvm::errs() << "end----------------------\n";
-    rewriter.replaceOp(read, load->getResults());
+    rewriter.replaceOp(read, cast->getResults());
     return ::mlir::success();
   }
 };
 
-// vector.transfer_write %5, %arg4[%0, %2] : vector<32xf32>, memref<512x640xf32>
+// vector.transfer_write %5, %arg4[%0, %2] : vector<1x32xf32>, memref<512x640xf32>
 // to
-// %desc2 = xegpu.create_nd_tdesc %arg4[%0, %2] {mode = vc} : memref<512x640xf32> -> !xegpu.tensor_desc<32xf32>
-// xegpu.store_nd %5, %desc2 {mode = vc} : vector<32xf32>, !xegpu.tensor_desc<32xf32>
+// %5 = vector.shape_cast %4 : vector<32xf32> to vector<1x32xf32>
+// %desc2 = xegpu.create_nd_tdesc %arg4[%0, %2] {mode = vc} : memref<512x640xf32> -> !xegpu.tensor_desc<1x32xf32>
+// xegpu.store_nd %5, %desc2 {mode = vc} : vector<1x32xf32>, !xegpu.tensor_desc<1x32xf32>
 struct TransferWriteOpConverter
     : public OpRewritePattern<vector::TransferWriteOp> {
   using OpRewritePattern::OpRewritePattern;
@@ -124,16 +136,19 @@ struct TransferWriteOpConverter
     auto resTileType = dyn_cast<VectorType>(resultTile.getType());
     llvm::errs() << __LINE__ << ": " << resTileType << "\n";
     auto resTileShape = resTileType.getShape();
+    auto intermediateType = VectorType::get({1, resTileShape[0]}, resTileType.getElementType());
     for (auto op : write->getOperands()) {
       llvm::errs() << __LINE__ << ": " << op << "\n";
     }
 
-    auto tDescTy = xegpu::TensorDescType::get({resTileShape[0]},
+    auto tDescTy = xegpu::TensorDescType::get({1, resTileShape[0]},
                                               resTileType.getElementType());
     mlir::SmallVector<mlir::OpFoldResult> tDescOffsets{write->getOperand(2),
                                                        write->getOperand(3)};
 
     rewriter.setInsertionPoint(write);
+    auto cast = rewriter.create<vector::ShapeCastOp>(write.getLoc(), intermediateType,
+                                                     write->getOperand(0));
     auto desc = rewriter.create<xegpu::CreateNdDescOp>(write.getLoc(), tDescTy,
                                                        source, tDescOffsets,
                                                        imex::xegpu::Mode::VC);
@@ -145,7 +160,7 @@ struct TransferWriteOpConverter
     auto L3 = xegpu::CacheWriteHintAttr::get(write->getContext(),
                                              xegpu::CacheWriteHint::WRITE_BACK);
     rewriter.create<xegpu::StoreNDOp>(write.getLoc(), TypeRange(), desc,
-                                      write->getOperand(0), L1, L2, L3,
+                                      cast, L1, L2, L3,
                                       imex::xegpu::Mode::VC);
     llvm::errs() << "end----------------------\n";
     rewriter.eraseOp(write);
