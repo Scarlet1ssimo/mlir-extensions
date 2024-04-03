@@ -354,6 +354,8 @@ struct HydrideArithPass : public HydrideArithBase<HydrideArithPass> {
   bool DisableSynth = false;
   bool DisableLegalize = false;
 
+  const char *benchmark_name;
+
   HydrideArithPass() {
     if (getenv("HYDRIDE_DISABLE_SYNTH")) {
       llvm::errs() << "Disabling Synthesis... This will lead to linking with old files.\n";
@@ -363,6 +365,7 @@ struct HydrideArithPass : public HydrideArithBase<HydrideArithPass> {
       llvm::errs() << "Disabling Synthesis\n";
       DisableLegalize = true;
     }
+    benchmark_name = getenv("HYDRIDE_BENCHMARK");
   }
 
   explicit HydrideArithPass(std::string synth_target) :HydrideArithPass() {
@@ -392,8 +395,6 @@ struct HydrideArithPass : public HydrideArithBase<HydrideArithPass> {
 
   std::string print_binary_op(std::string bv_name, Value a, Value b,
                               bool is_vector_op);
-
-  gpu::GPUModuleOp mainGPUModule;
 
 protected:
   std::string visit(arith::ConstantOp constantOp) {
@@ -839,189 +840,195 @@ void HydrideArithPass::runOnOperation() {
   target.addLegalOp<gpu::GPUModuleOp>();
   // target.addLegalDialect<mlir::LLVMDialect>();
   LLVMTypeConverter typeConverter(&getContext());
-
-  this->mainGPUModule = dyn_cast<gpu::GPUModuleOp>(getOperation());
-  std::string curr_func_name;
-  // Compute the operation statistics for the currently visited operation.
-  this->mainGPUModule->walk([&](gpu::GPUFuncOp funcOp) {
-    curr_func_name = funcOp.getName().str();
-    llvm::errs() << "curr_func_name: " << curr_func_name << "\n";
-    funcOp.walk([&](Operation *op) {
-      llvm::errs() << *op << "\n";
-      if (auto returnOp = dyn_cast<gpu::ReturnOp>(op)) {
-        RootExprOp.push(op);
-      }
-      if (auto storeOp = dyn_cast<vector::StoreOp>(op)) {
-        RootExprOp.push(op);
-      }
-      if (auto transferWriteOp = dyn_cast<vector::TransferWriteOp>(op)) {
-        RootExprOp.push(op);
-      }
-      /* if (auto storeOp = dyn_cast<AffineStoreOp>(op)) {
-        RootExprOp.push(op);
-      } */
-      if (op->getNumResults() > 0) {
-        auto vecType = op->getResult(0).getType().dyn_cast<VectorType>();
-        if (vecType && vecType.getElementType()) {
-          op_lanes = vecType.getNumElements();
-        }
-      }
-    });
-  });
-
-  // move to own function
-  // EmitSynthesis();
+  ModuleOp mainModule = getOperation();
   unsigned expr_id = 0;
-  while (!RootExprOp.empty()) {
+  std::string curr_func_name = benchmark_name;
+  // curr_func_name = std::string();
+  mainModule->walk([&](gpu::GPUModuleOp mainGPUModule) {
+    llvm::errs() << "*** HydrideArithPass Running on "
+                 << mainGPUModule.getName() << "\n";
+    // Compute the operation statistics for the currently visited operation.
+    mainGPUModule->walk([&](gpu::GPUFuncOp funcOp) {
+      llvm::errs() << "curr_func_name: " << curr_func_name << "\n";
+      funcOp.walk([&](Operation *op) {
+        llvm::errs() << *op << "\n";
+        if (auto returnOp = dyn_cast<gpu::ReturnOp>(op)) {
+          RootExprOp.push(op);
+        }
+        if (auto storeOp = dyn_cast<vector::StoreOp>(op)) {
+          RootExprOp.push(op);
+        }
+        if (auto transferWriteOp = dyn_cast<vector::TransferWriteOp>(op)) {
+          RootExprOp.push(op);
+        }
+        /* if (auto storeOp = dyn_cast<AffineStoreOp>(op)) {
+          RootExprOp.push(op);
+        } */
+        if (op->getNumResults() > 0) {
+          auto vecType = op->getResult(0).getType().dyn_cast<VectorType>();
+          if (vecType && vecType.getElementType()) {
+            op_lanes = vecType.getNumElements();
+          }
+        }
+      });
+    });
 
-    auto op = RootExprOp.front();
-    // if result, expr from MLIRValVisit for all results
-    // if store, expr from MLIRValVisit on single source vector
-    // if other op, expr from MLIRValVisit for all operands
-    std::string expr;
-    // if (auto returnOp = dyn_cast<func::ReturnOp>(op)) {
-    //   for (Value operand : op->getOperands()) {
-    //     expr = MLIRValVisit(operand);
-    //     EmitSynthesis(curr_func_name, expr, expr_id);
-    //     std::vector<Type> arg_types(RegToLoadMap.size() +
-    //                                 RegToTransferReadMap.size() +
-    //                                 RegToVariableMap.size());
-    //     std::vector<Value> args_vec(RegToLoadMap.size() +
-    //                                 RegToTransferReadMap.size() +
-    //                                 RegToVariableMap.size());
+    // move to own function
+    // EmitSynthesis();
 
-    //     for (auto reg : RegToLoadMap) {
-    //       arg_types[reg.first] = reg.second.getType();
-    //       args_vec[reg.first] = reg.second;
-    //     }
+    while (!RootExprOp.empty()) {
 
-    //     for (auto reg : RegToTransferReadMap) {
-    //       arg_types[reg.first] = reg.second.getVector().getType();
-    //       args_vec[reg.first] = reg.second;
-    //     }
+      auto op = RootExprOp.front();
+      // if result, expr from MLIRValVisit for all results
+      // if store, expr from MLIRValVisit on single source vector
+      // if other op, expr from MLIRValVisit for all operands
+      std::string expr;
+      // if (auto returnOp = dyn_cast<func::ReturnOp>(op)) {
+      //   for (Value operand : op->getOperands()) {
+      //     expr = MLIRValVisit(operand);
+      //     EmitSynthesis(curr_func_name, expr, expr_id);
+      //     std::vector<Type> arg_types(RegToLoadMap.size() +
+      //                                 RegToTransferReadMap.size() +
+      //                                 RegToVariableMap.size());
+      //     std::vector<Value> args_vec(RegToLoadMap.size() +
+      //                                 RegToTransferReadMap.size() +
+      //                                 RegToVariableMap.size());
 
-    //     for (auto reg : RegToVariableMap) {
-    //       auto val = Value::getFromOpaquePointer(reg.second);
-    //       arg_types[reg.first] = val.getType();
-    //       args_vec[reg.first] = val;
-    //     }
+      //     for (auto reg : RegToLoadMap) {
+      //       arg_types[reg.first] = reg.second.getType();
+      //       args_vec[reg.first] = reg.second;
+      //     }
 
-    //     MLIRContext *ctx = returnOp.getContext();
-    //     MyPatternRewriter rewriter(ctx);
-    //     FlatSymbolRefAttr sym_ref = getOrInsertHydrideFunc(
-    //         rewriter, this->mainGPUModule, expr_id, curr_func_name,
-    //         operand.getType(), arg_types);
-    //     rewriter.setInsertionPoint(returnOp);
-    //     Location loc = returnOp->getLoc();
-    //     auto callOp = rewriter.create<LLVM::CallOp>(
-    //         loc, TypeRange(operand.getType()), sym_ref,
-    //         ValueRange(args_vec));
-    //     operand.replaceAllUsesWith(callOp.getResult());
-    //     expr_id++;
-    //   }
-    // }
-    // if (auto storeOp = dyn_cast<vector::StoreOp>(op)) {
-    //   auto valToStore = storeOp.getValueToStore();
-    //   auto valToStoreType = valToStore.getType();
-    //   expr = MLIRValVisit(valToStore);
-    //   EmitSynthesis(curr_func_name, expr, expr_id);
+      //     for (auto reg : RegToTransferReadMap) {
+      //       arg_types[reg.first] = reg.second.getVector().getType();
+      //       args_vec[reg.first] = reg.second;
+      //     }
 
-    //   std::vector<Type> arg_types(RegToLoadMap.size() +
-    //                               RegToTransferReadMap.size() +
-    //                               RegToVariableMap.size());
-    //   std::vector<Value> args_vec(RegToLoadMap.size() +
-    //                               RegToTransferReadMap.size() +
-    //                               RegToVariableMap.size());
-    //   for (auto reg : RegToLoadMap) {
-    //     arg_types[reg.first] = reg.second.getType();
-    //     args_vec[reg.first] = reg.second;
-    //   }
+      //     for (auto reg : RegToVariableMap) {
+      //       auto val = Value::getFromOpaquePointer(reg.second);
+      //       arg_types[reg.first] = val.getType();
+      //       args_vec[reg.first] = val;
+      //     }
 
-    //   for (auto reg : RegToVariableMap) {
-    //     auto val = Value::getFromOpaquePointer(reg.second);
-    //     arg_types[reg.first] = val.getType();
-    //     args_vec[reg.first] = val;
-    //   }
+      //     MLIRContext *ctx = returnOp.getContext();
+      //     MyPatternRewriter rewriter(ctx);
+      //     FlatSymbolRefAttr sym_ref = getOrInsertHydrideFunc(
+      //         rewriter, mainGPUModule, expr_id, curr_func_name,
+      //         operand.getType(), arg_types);
+      //     rewriter.setInsertionPoint(returnOp);
+      //     Location loc = returnOp->getLoc();
+      //     auto callOp = rewriter.create<LLVM::CallOp>(
+      //         loc, TypeRange(operand.getType()), sym_ref,
+      //         ValueRange(args_vec));
+      //     operand.replaceAllUsesWith(callOp.getResult());
+      //     expr_id++;
+      //   }
+      // }
+      // if (auto storeOp = dyn_cast<vector::StoreOp>(op)) {
+      //   auto valToStore = storeOp.getValueToStore();
+      //   auto valToStoreType = valToStore.getType();
+      //   expr = MLIRValVisit(valToStore);
+      //   EmitSynthesis(curr_func_name, expr, expr_id);
 
-    //   MLIRContext *ctx = storeOp.getContext();
-    //   MyPatternRewriter rewriter(ctx);
-    //   FlatSymbolRefAttr sym_ref =
-    //       getOrInsertHydrideFunc(rewriter, this->mainGPUModule, expr_id,
-    //                              curr_func_name, valToStoreType, arg_types);
-    //   // get all args in
-    //   rewriter.setInsertionPoint(storeOp);
-    //   Location loc = storeOp->getLoc();
-    //   auto callOp = rewriter.create<LLVM::CallOp>(
-    //       loc, TypeRange(valToStoreType), sym_ref, ValueRange(args_vec));
-    //   storeOp->setOperands(0, 1, callOp.getResult());
+      //   std::vector<Type> arg_types(RegToLoadMap.size() +
+      //                               RegToTransferReadMap.size() +
+      //                               RegToVariableMap.size());
+      //   std::vector<Value> args_vec(RegToLoadMap.size() +
+      //                               RegToTransferReadMap.size() +
+      //                               RegToVariableMap.size());
+      //   for (auto reg : RegToLoadMap) {
+      //     arg_types[reg.first] = reg.second.getType();
+      //     args_vec[reg.first] = reg.second;
+      //   }
 
-    //   expr_id++;
-    // }
+      //   for (auto reg : RegToVariableMap) {
+      //     auto val = Value::getFromOpaquePointer(reg.second);
+      //     arg_types[reg.first] = val.getType();
+      //     args_vec[reg.first] = val;
+      //   }
 
-    if (auto transferWriteOp = dyn_cast<vector::TransferWriteOp>(op)) {
-      auto valToStore = transferWriteOp.getVector();
-      auto valToStoreType = valToStore.getType();
-      expr = MLIRValVisit(valToStore);
-      EmitSynthesis(curr_func_name, expr, expr_id);
-      std::vector<Type> arg_types(RegToLoadMap.size() +
-                                  RegToTransferReadMap.size() +
-                                  RegToVariableMap.size());
-      std::vector<Value> args_vec(RegToLoadMap.size() +
-                                  RegToTransferReadMap.size() +
-                                  RegToVariableMap.size());
+      //   MLIRContext *ctx = storeOp.getContext();
+      //   MyPatternRewriter rewriter(ctx);
+      //   FlatSymbolRefAttr sym_ref =
+      //       getOrInsertHydrideFunc(rewriter, mainGPUModule, expr_id,
+      //                              curr_func_name, valToStoreType,
+      //                              arg_types);
+      //   // get all args in
+      //   rewriter.setInsertionPoint(storeOp);
+      //   Location loc = storeOp->getLoc();
+      //   auto callOp = rewriter.create<LLVM::CallOp>(
+      //       loc, TypeRange(valToStoreType), sym_ref, ValueRange(args_vec));
+      //   storeOp->setOperands(0, 1, callOp.getResult());
 
-      for (auto reg : RegToTransferReadMap) {
-        arg_types[reg.first] = reg.second.getVector().getType();
-        args_vec[reg.first] = reg.second;
-      }
+      //   expr_id++;
+      // }
 
-      for (auto reg : RegToVariableMap) {
-        auto val = Value::getFromOpaquePointer(reg.second);
-        arg_types[reg.first] = val.getType();
-        args_vec[reg.first] = val;
-      }
-
-      MLIRContext *ctx = transferWriteOp.getContext();
-      MyPatternRewriter rewriter(ctx);
-
-      FlatSymbolRefAttr sym_ref =
-          getOrInsertHydrideFunc(rewriter, this->mainGPUModule, expr_id,
-                                 curr_func_name, valToStoreType, arg_types);
-      // get all args in
-      rewriter.setInsertionPoint(transferWriteOp);
-      Location loc = transferWriteOp->getLoc();
-      auto callOp = rewriter.create<spirv::FunctionCallOp>(
-          loc, TypeRange(valToStoreType), sym_ref, ValueRange(args_vec));
-      transferWriteOp->setOperands(0, 1, callOp.getResult(0));
-      expr_id++;
-    }
-
-    else {
-
-      if (op->getNumResults() > 0) {
-        if (op->getDialect()->getNamespace() == "arith") {
-          expr = MLIRArithOpVisit(op);
-        } else if (op->getDialect()->getNamespace() == "vector") {
-          expr = MLIRVectorOpVisit(op);
-        } else
-          continue;
+      if (auto transferWriteOp = dyn_cast<vector::TransferWriteOp>(op)) {
+        auto valToStore = transferWriteOp.getVector();
+        auto valToStoreType = valToStore.getType();
+        expr = MLIRValVisit(valToStore);
         EmitSynthesis(curr_func_name, expr, expr_id);
+        std::vector<Type> arg_types(RegToLoadMap.size() +
+                                    RegToTransferReadMap.size() +
+                                    RegToVariableMap.size());
+        std::vector<Value> args_vec(RegToLoadMap.size() +
+                                    RegToTransferReadMap.size() +
+                                    RegToVariableMap.size());
+
+        for (auto reg : RegToTransferReadMap) {
+          arg_types[reg.first] = reg.second.getVector().getType();
+          args_vec[reg.first] = reg.second;
+        }
+
+        for (auto reg : RegToVariableMap) {
+          auto val = Value::getFromOpaquePointer(reg.second);
+          arg_types[reg.first] = val.getType();
+          args_vec[reg.first] = val;
+        }
+
+        MLIRContext *ctx = transferWriteOp.getContext();
+        MyPatternRewriter rewriter(ctx);
+
+        FlatSymbolRefAttr sym_ref =
+            getOrInsertHydrideFunc(rewriter, mainGPUModule, expr_id,
+                                   curr_func_name, valToStoreType, arg_types);
+        // get all args in
+        rewriter.setInsertionPoint(transferWriteOp);
+        Location loc = transferWriteOp->getLoc();
+        auto callOp = rewriter.create<spirv::FunctionCallOp>(
+            loc, TypeRange(valToStoreType), sym_ref, ValueRange(args_vec));
+        transferWriteOp->setOperands(0, 1, callOp.getResult(0));
         expr_id++;
       }
-    }
 
-    RegToVariableMap.clear();
-    VariableToRegMap.clear();
-    RegToTransferReadMap.clear();
-    TransferReadToRegMap.clear();
-    RegToLoadMap.clear();
-    LoadToRegMap.clear();
-    RootExprOp.pop();
-  }
+      else {
+
+        if (op->getNumResults() > 0) {
+          if (op->getDialect()->getNamespace() == "arith") {
+            expr = MLIRArithOpVisit(op);
+          } else if (op->getDialect()->getNamespace() == "vector") {
+            expr = MLIRVectorOpVisit(op);
+          } else
+            continue;
+          EmitSynthesis(curr_func_name, expr, expr_id);
+          expr_id++;
+        }
+      }
+
+      RegToVariableMap.clear();
+      VariableToRegMap.clear();
+      RegToTransferReadMap.clear();
+      TransferReadToRegMap.clear();
+      RegToLoadMap.clear();
+      LoadToRegMap.clear();
+      RootExprOp.pop();
+    }
+    llvm::errs() << *mainGPUModule << "\n";
+  });
   llvm::errs() << "--------------------------------\n";
   llvm::errs() << "Hydride Synthesis Complete\n";
   EmitLLVMCode();
-  llvm::errs() << *this->mainGPUModule << "\n";
+  llvm::errs() << *mainModule << "\n";
 }
 
 FlatSymbolRefAttr HydrideArithPass::getOrInsertHydrideFunc(
@@ -1317,7 +1324,7 @@ void HydrideArithPass::EmitLLVMCode() {
                     std::string(legalizer_so) + " " +
                     std::string(intrin_wrapper) + " -visa-hydride-legalize " +
                     output_file;
-  llvm::errs() << "About to execute" << cmd << "\n";
+  llvm::errs() << "About to execute " << cmd << "\n";
   if (!DisableLegalize) {
     auto start = std::chrono::system_clock::now();
 
@@ -1339,7 +1346,7 @@ void HydrideArithPass::EmitLLVMCode() {
 
 void HydrideArithPass::EmitSynthesis(std::string benchmark_name,
                                      std::string expr, unsigned expr_id) {
-  HydrideSynthEmitter HSE(benchmark_name, LoadToRegMap, VariableToRegMap,
+    HydrideSynthEmitter HSE(benchmark_name, LoadToRegMap, VariableToRegMap,
                           TransferReadToRegMap);
   std::string errorMessage;
   std::string out_str;
@@ -1410,7 +1417,7 @@ void HydrideArithPass::EmitSynthesis(std::string benchmark_name,
   file->os().close();
 
   std::string cmd = "racket " + outputFilename;
-  llvm::errs() << "About to execute" << cmd << "\n";
+  llvm::errs() << "About to execute " << cmd << "\n";
   if(!DisableSynth){
     auto start = std::chrono::system_clock::now();
     int ret_code = system(cmd.c_str());

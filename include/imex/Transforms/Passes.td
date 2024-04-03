@@ -138,7 +138,7 @@ def PropagatePackedLayout : Pass<"imex-propagate-packed-layout"> {
   ];
 }
 
-def HydrideArith : Pass<"hydride-arith", "::mlir::gpu::GPUModuleOp"> {
+def HydrideArith : Pass<"hydride-arith", "::mlir::ModuleOp"> {
   let summary = "Hydride Arith Frontend";
   let constructor = "imex::createHydrideArithPass()";
   let dependentDialects = [
