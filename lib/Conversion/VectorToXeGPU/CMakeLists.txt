@@ -8,5 +8,5 @@ add_imex_conversion_library(IMEXVectorToXeGPU
   IMEXConversionPassIncGen
 
   LINK_LIBS PUBLIC
-  IMEXXeGPUDialect
+  MLIRXeGPUDialect
 )

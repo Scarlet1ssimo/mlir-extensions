@@ -14,7 +14,7 @@
 //===----------------------------------------------------------------------===//
 
 #include <imex/Conversion/VectorToXeGPU/VectorToXeGPU.h>
-#include <imex/Dialect/XeGPU/IR/XeGPU.h>
+#include <mlir/Dialect/XeGPU/IR/XeGPU.h>
 #include <imex/Utils/PassWrapper.h>
 #include <mlir/Dialect/Vector/IR/VectorOps.h>
 
@@ -72,6 +72,7 @@ struct TransferReadOpConverter
   using OpRewritePattern::OpRewritePattern;
   LogicalResult matchAndRewrite(vector::TransferReadOp read,
                                 PatternRewriter &rewriter) const override {
+    auto ctx = read->getContext();
     auto resultTile = read.getResult();
     auto resTileType = resultTile.getType();
     auto resTileShape = resTileType.getShape();
@@ -100,18 +101,18 @@ struct TransferReadOpConverter
 
     rewriter.setInsertionPoint(read);
     auto desc = rewriter.create<xegpu::CreateNdDescOp>(
-        read.getLoc(), tDescTy, source, tDescOffsets, imex::xegpu::Mode::VC);
+        read.getLoc(), tDescTy, source, tDescOffsets);
     mlir::IntegerAttr vnniAxisAttr;
     mlir::DenseI64ArrayAttr transposeAttr;
-    auto L1 = xegpu::CacheReadHintAttr::get(read.getContext(),
-                                            xegpu::CacheReadHint::CACHED);
-    auto L2 = xegpu::CacheReadHintAttr::get(read.getContext(),
-                                            xegpu::CacheReadHint::CACHED);
-    auto L3 = xegpu::CacheReadHintAttr::get(read.getContext(),
-                                            xegpu::CacheReadHint::CACHED);
-    auto load = rewriter.create<xegpu::LoadNDOp>(
+    auto L1 = mlir::xegpu::CachePolicyAttr::get(
+        ctx, mlir::xegpu::CachePolicy::CACHED);
+    auto L2 = mlir::xegpu::CachePolicyAttr::get(
+        ctx, mlir::xegpu::CachePolicy::CACHED);
+    auto L3 = mlir::xegpu::CachePolicyAttr::get(
+        ctx, mlir::xegpu::CachePolicy::CACHED);
+    auto load = rewriter.create<xegpu::LoadNdOp>(
         read.getLoc(), intermediateType, desc, vnniAxisAttr, transposeAttr, L1, L2,
-        L3, imex::xegpu::Mode::VC);
+        L3);
     
     auto cast= rewriter.create<vector::ShapeCastOp>(read.getLoc(), resTileType,
                                                      load->getResults());
@@ -150,6 +151,7 @@ struct TransferWriteOpConverter
   using OpRewritePattern::OpRewritePattern;
   LogicalResult matchAndRewrite(vector::TransferWriteOp write,
                                 PatternRewriter &rewriter) const override {
+    auto ctx=write->getContext();
     llvm::errs() << "----------------------\n";
     auto resultTile = write->getOperand(0);//%5
     auto source = write.getSource(); // memref<512x640xi32>
@@ -172,18 +174,15 @@ struct TransferWriteOpConverter
     auto cast = rewriter.create<vector::ShapeCastOp>(write.getLoc(), intermediateType,
                                                      write->getOperand(0));
     auto desc = rewriter.create<xegpu::CreateNdDescOp>(write.getLoc(), tDescTy,
-                                                       source, tDescOffsets,
-                                                       imex::xegpu::Mode::VC);
+                                                       source, tDescOffsets);
     llvm::errs() << __LINE__ << ": " << desc << "\n";
-    auto L1 = xegpu::CacheWriteHintAttr::get(write->getContext(),
-                                             xegpu::CacheWriteHint::WRITE_BACK);
-    auto L2 = xegpu::CacheWriteHintAttr::get(write->getContext(),
-                                             xegpu::CacheWriteHint::WRITE_BACK);
-    auto L3 = xegpu::CacheWriteHintAttr::get(write->getContext(),
-                                             xegpu::CacheWriteHint::WRITE_BACK);
-    rewriter.create<xegpu::StoreNDOp>(write.getLoc(), TypeRange(), desc,
-                                      cast, L1, L2, L3,
-                                      imex::xegpu::Mode::VC);
+    
+    auto WRITE_BACK = mlir::xegpu::CachePolicy::WRITE_BACK;
+    auto L1 = mlir::xegpu::CachePolicyAttr::get(ctx, WRITE_BACK);
+    auto L2 = mlir::xegpu::CachePolicyAttr::get(ctx, WRITE_BACK);
+    auto L3 = mlir::xegpu::CachePolicyAttr::get(ctx, WRITE_BACK);
+    rewriter.create<xegpu::StoreNdOp>(write.getLoc(), TypeRange(), desc,
+                                      cast, L1, L2, L3);
     llvm::errs() << "end----------------------\n";
     rewriter.eraseOp(write);
     return ::mlir::success();

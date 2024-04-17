@@ -467,7 +467,7 @@ def ConvertVectorToXeGPU: Pass<"convert-vector-to-xegpu", "::mlir::ModuleOp"> {
     xegpu.store_nd %5, %desc2 {mode = vc} : vector<32xf32>, !xegpu.tensor_desc<32xf32>
   }];
   let constructor = "::imex::createConvertVectorToXeGPUPass()";
-  let dependentDialects = ["::imex::xegpu::XeGPUDialect"];
+  let dependentDialects = ["::mlir::xegpu::XeGPUDialect"];
   let options = [];
 }
 
