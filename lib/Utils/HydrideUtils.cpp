@@ -16,7 +16,7 @@ std::string mlir::NYI() {
 }
 
 std::string mlir::stringifyType(Type type) {
-  if (auto intType = type.dyn_cast<IntegerType>()) {
+  if (auto intType = dyn_cast<IntegerType>(type)) {
     if (intType.getWidth() == 64)
       return "64";
     if (intType.getWidth() == 32)
@@ -36,7 +36,7 @@ std::string mlir::stringifyType(Type type) {
 }
 
 std::string mlir::signedOrUnsignedIntStr(Type type) {
-  if (auto intType = type.dyn_cast<IntegerType>()) {
+  if (auto intType = dyn_cast<IntegerType>(type)) {
     if (intType.isSignlessInteger())
       return "#t";
   }

@@ -100,10 +100,18 @@ struct TransferReadOpConverter
                                                        read->getOperand(2)};
 
     rewriter.setInsertionPoint(read);
-    auto desc = rewriter.create<xegpu::CreateNdDescOp>(
-        read.getLoc(), tDescTy, source, tDescOffsets);
+    mlir::Value desc;
+    if (auto MemRefTypedSource =
+            mlir::cast<mlir::TypedValue<mlir::MemRefType>>(source)) {
+      desc = rewriter.create<mlir::xegpu::CreateNdDescOp>(
+          read.getLoc(), tDescTy /*resultTy*/, MemRefTypedSource /*source*/,
+          tDescOffsets /*offsets*/);
+    } else {
+      return mlir::failure();
+    }
     mlir::IntegerAttr vnniAxisAttr;
     mlir::DenseI64ArrayAttr transposeAttr;
+    mlir::IntegerAttr transposeBitWidthAttr;
     auto L1 = mlir::xegpu::CachePolicyAttr::get(
         ctx, mlir::xegpu::CachePolicy::CACHED);
     auto L2 = mlir::xegpu::CachePolicyAttr::get(
@@ -111,7 +119,7 @@ struct TransferReadOpConverter
     auto L3 = mlir::xegpu::CachePolicyAttr::get(
         ctx, mlir::xegpu::CachePolicy::CACHED);
     auto load = rewriter.create<xegpu::LoadNdOp>(
-        read.getLoc(), intermediateType, desc, vnniAxisAttr, transposeAttr, L1, L2,
+        read.getLoc(), intermediateType, desc, vnniAxisAttr, transposeAttr, transposeBitWidthAttr, L1, L2,
         L3);
     
     auto cast= rewriter.create<vector::ShapeCastOp>(read.getLoc(), resTileType,
@@ -173,8 +181,15 @@ struct TransferWriteOpConverter
     rewriter.setInsertionPoint(write);
     auto cast = rewriter.create<vector::ShapeCastOp>(write.getLoc(), intermediateType,
                                                      write->getOperand(0));
-    auto desc = rewriter.create<xegpu::CreateNdDescOp>(write.getLoc(), tDescTy,
-                                                       source, tDescOffsets);
+    mlir::Value desc;
+    if (auto MemRefTypedSource =
+            mlir::cast<mlir::TypedValue<mlir::MemRefType>>(source)) {
+      desc = rewriter.create<mlir::xegpu::CreateNdDescOp>(
+          write.getLoc(), tDescTy /*resultTy*/, MemRefTypedSource /*source*/,
+          tDescOffsets /*offsets*/);
+    } else {
+      return mlir::failure();
+    }
     llvm::errs() << __LINE__ << ": " << desc << "\n";
     
     auto WRITE_BACK = mlir::xegpu::CachePolicy::WRITE_BACK;

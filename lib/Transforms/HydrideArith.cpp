@@ -88,7 +88,7 @@ public:
                                       bool c_plus_plus) {
     bool needs_space = true;
     std::ostringstream oss;
-    if (auto intType = type.dyn_cast<IntegerType>()) {
+    if (auto intType = dyn_cast<IntegerType>(type)) {
       if (intType.isUnsigned()) {
         oss << "u";
       }
@@ -165,7 +165,7 @@ public:
     unsigned rank = 0;
     std::vector<unsigned> shape;
 
-    auto vecType = type.dyn_cast<VectorType>();
+    auto vecType = dyn_cast<VectorType>(type);
     if (vecType && vecType.getElementType()) {
       bitwidth = vecType.getElementTypeBitWidth() * vecType.getNumElements();
       elemT += mlir_type_to_synth_elem(vecType.getElementType(), false, true);
@@ -398,14 +398,14 @@ struct HydrideArithPass : public HydrideArithBase<HydrideArithPass> {
 
 protected:
   std::string visit(arith::ConstantOp constantOp) {
-    auto constInt = constantOp.getValue().cast<IntegerAttr>().getInt();
+    auto constInt = cast<IntegerAttr>(constantOp.getValue()).getInt();
     return std::to_string(constInt);
   }
 
   std::string visit(arith::AddIOp addOp) {
     Value a = addOp.getLhs();
     Value b = addOp.getRhs();
-    bool is_vec = addOp.getResult().getType().isa<VectorType>();
+    bool is_vec = isa<VectorType>(addOp.getResult().getType());
     std::string ret_str = print_binary_op("add", a, b, is_vec);
     return ret_str;
   }
@@ -413,7 +413,7 @@ protected:
   std::string visit(arith::DivUIOp divUIOp) {
     Value a = divUIOp.getLhs();
     Value b = divUIOp.getRhs();
-    bool is_vec = divUIOp.getResult().getType().isa<VectorType>();
+    bool is_vec = isa<VectorType>(divUIOp.getResult().getType());
     std::string ret_str = print_binary_op("div", a, b, is_vec);
     return ret_str;
   }
@@ -421,7 +421,7 @@ protected:
   std::string visit(arith::DivSIOp divSIOp) {
     Value a = divSIOp.getLhs();
     Value b = divSIOp.getRhs();
-    bool is_vec = divSIOp.getResult().getType().isa<VectorType>();
+    bool is_vec = isa<VectorType>(divSIOp.getResult().getType());
     std::string ret_str = print_binary_op("div", a, b, is_vec);
     return ret_str;
   }
@@ -429,7 +429,7 @@ protected:
   std::string visit(arith::SubIOp subOp) {
     Value a = subOp.getLhs();
     Value b = subOp.getRhs();
-    bool is_vec = subOp.getResult().getType().isa<VectorType>();
+    bool is_vec = isa<VectorType>(subOp.getResult().getType());
     std::string ret_str = print_binary_op("sub", a, b, is_vec);
     return ret_str;
   }
@@ -437,7 +437,7 @@ protected:
   std::string visit(arith::MinUIOp minUIOp) {
     Value a = minUIOp.getLhs();
     Value b = minUIOp.getRhs();
-    bool is_vec = minUIOp.getResult().getType().isa<VectorType>();
+    bool is_vec = isa<VectorType>(minUIOp.getResult().getType());
     std::string ret_str = print_binary_op("min", a, b, is_vec);
     return ret_str;
   }
@@ -445,7 +445,7 @@ protected:
   std::string visit(arith::MinSIOp minSIOp) {
     Value a = minSIOp.getLhs();
     Value b = minSIOp.getRhs();
-    bool is_vec = minSIOp.getResult().getType().isa<VectorType>();
+    bool is_vec = isa<VectorType>(minSIOp.getResult().getType());
     std::string ret_str = print_binary_op("min", a, b, is_vec);
     return ret_str;
   }
@@ -453,7 +453,7 @@ protected:
   std::string visit(arith::MaxUIOp maxUIOp) {
     Value a = maxUIOp.getLhs();
     Value b = maxUIOp.getRhs();
-    bool is_vec = maxUIOp.getResult().getType().isa<VectorType>();
+    bool is_vec = isa<VectorType>(maxUIOp.getResult().getType());
     std::string ret_str = print_binary_op("max", a, b, is_vec);
     return ret_str;
   }
@@ -461,7 +461,7 @@ protected:
   std::string visit(arith::MaxSIOp maxSIOp) {
     Value a = maxSIOp.getLhs();
     Value b = maxSIOp.getRhs();
-    bool is_vec = maxSIOp.getResult().getType().isa<VectorType>();
+    bool is_vec = isa<VectorType>(maxSIOp.getResult().getType());
     std::string ret_str = print_binary_op("max", a, b, is_vec);
     return ret_str;
   }
@@ -469,7 +469,7 @@ protected:
   std::string visit(arith::MulIOp mulOp) {
     Value a = mulOp.getLhs();
     Value b = mulOp.getRhs();
-    bool is_vec = mulOp.getResult().getType().isa<VectorType>();
+    bool is_vec = isa<VectorType>(mulOp.getResult().getType());
     std::string ret_str = print_binary_op("mul", a, b, is_vec);
     return ret_str;
   }
@@ -477,7 +477,7 @@ protected:
   std::string visit(arith::ShRSIOp shrSIOp) {
     Value a = shrSIOp.getLhs();
     Value b = shrSIOp.getRhs();
-    bool is_vec = shrSIOp.getResult().getType().isa<VectorType>();
+    bool is_vec = isa<VectorType>(shrSIOp.getResult().getType());
     std::string ret_str = print_binary_op("shr", a, b, is_vec);
     return ret_str;
   }
@@ -485,7 +485,7 @@ protected:
   std::string visit(arith::ShRUIOp shrUIOp) {
     Value a = shrUIOp.getLhs();
     Value b = shrUIOp.getRhs();
-    bool is_vec = shrUIOp.getResult().getType().isa<VectorType>();
+    bool is_vec = isa<VectorType>(shrUIOp.getResult().getType());
     std::string ret_str = print_binary_op("shr", a, b, is_vec);
     return ret_str;
   }
@@ -493,7 +493,7 @@ protected:
   std::string visit(arith::ShLIOp shlIOp) {
     Value a = shlIOp.getLhs();
     Value b = shlIOp.getRhs();
-    bool is_vec = shlIOp.getResult().getType().isa<VectorType>();
+    bool is_vec = isa<VectorType>(shlIOp.getResult().getType());
     std::string ret_str = print_binary_op("shl", a, b, is_vec);
     return ret_str;
   }
@@ -501,7 +501,7 @@ protected:
   std::string visit(arith::CmpIOp cmpOp) {
     Value a = cmpOp.getOperand(0);
     Value b = cmpOp.getOperand(1);
-    bool is_vec = a.getType().dyn_cast<VectorType>() ? true : false;
+    bool is_vec = dyn_cast<VectorType>(a.getType()) ? true : false;
     auto pred = cmpOp.getPredicate();
     std::string ret_str;
     // signed.unsigned
@@ -764,14 +764,14 @@ protected:
   std::string visit(vector::TransposeOp transposeOp) { return ""; }
 
   std::string visit(vector::LoadOp loadOp) {
-    bool is_sca = loadOp->getResult(0).getType().isa<IntegerType>();
+    bool is_sca = isa<IntegerType>(loadOp->getResult(0).getType());
 
     if (LoadToRegMap.find(loadOp) != LoadToRegMap.end()) {
       return "reg_" + std::to_string(LoadToRegMap[loadOp]);
     }
 
     if (is_sca) {
-      auto intType = loadOp->getResult(0).getType().dyn_cast<VectorType>();
+      auto intType = dyn_cast<VectorType>(loadOp->getResult(0).getType());
       std::string bits = std::to_string(intType.getElementTypeBitWidth() * 1);
       unsigned reg_counter = RegToLoadMap.size() + RegToTransferReadMap.size() +
                              RegToVariableMap.size();
@@ -781,7 +781,7 @@ protected:
       return reg_name;
     } else {
 
-      auto vecType = loadOp->getResult(0).getType().dyn_cast<VectorType>();
+      auto vecType = dyn_cast<VectorType>(loadOp->getResult(0).getType());
       std::string bits = std::to_string(vecType.getElementTypeBitWidth() *
                                         vecType.getNumElements());
       unsigned reg_counter = RegToLoadMap.size() + RegToTransferReadMap.size() +
@@ -800,7 +800,7 @@ protected:
 
   std::string visit(vector::TransferReadOp transferReadOp) {
 
-    bool is_sca = transferReadOp->getResult(0).getType().isa<IntegerType>();
+    bool is_sca = isa<IntegerType>(transferReadOp->getResult(0).getType());
     if (TransferReadToRegMap.find(transferReadOp) !=
         TransferReadToRegMap.end()) {
       return "reg_" + std::to_string(TransferReadToRegMap[transferReadOp]);
@@ -808,7 +808,7 @@ protected:
 
     if (is_sca) {
       auto intType =
-          transferReadOp->getResult(0).getType().dyn_cast<VectorType>();
+          dyn_cast<VectorType>(transferReadOp->getResult(0).getType());
       std::string bits = std::to_string(intType.getElementTypeBitWidth() * 1);
       unsigned reg_counter = RegToLoadMap.size() + RegToTransferReadMap.size() +
                              RegToVariableMap.size();
@@ -819,7 +819,7 @@ protected:
     } else {
 
       auto vecType =
-          transferReadOp->getResult(0).getType().dyn_cast<VectorType>();
+          dyn_cast<VectorType>(transferReadOp->getResult(0).getType());
       std::string bits = std::to_string(vecType.getElementTypeBitWidth() *
                                         vecType.getNumElements());
       unsigned reg_counter = RegToLoadMap.size() + RegToTransferReadMap.size() +
@@ -865,7 +865,7 @@ void HydrideArithPass::runOnOperation() {
           RootExprOp.push(op);
         } */
         if (op->getNumResults() > 0) {
-          auto vecType = op->getResult(0).getType().dyn_cast<VectorType>();
+          auto vecType = dyn_cast<VectorType>(op->getResult(0).getType());
           if (vecType && vecType.getElementType()) {
             op_lanes = vecType.getNumElements();
           }
@@ -1093,7 +1093,7 @@ std::string HydrideArithPass::MLIRValVisit(Value val) {
     }
   }
 
-  if (val.isa<BlockArgument>()) {
+  if (isa<BlockArgument>(val)) {
 
     if (VariableToRegMap.find(valAsOpaquePointer) != VariableToRegMap.end()) {
       std::string reg_name =
