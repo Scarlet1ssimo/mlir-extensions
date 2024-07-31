@@ -32,7 +32,7 @@ def XeTile_InitTileOp : XeTile_Op<"init_tile", [Pure, AttrSizedOperandSegments]>
     let summary = "Describes an XeTile with reference to a base memref";
     let description = [{
         The "init_tile" operation is used to describe a 2D region (i.e. tile) in gloabl memory.
-        This operation takes in a 2D memref or an address and return an xetile. If dynamic-shaped
+        This operation takes in a memref or an address and return an xetile. If dynamic-shaped
         memref or an address is used as the base, it is required to specify the shape and strides
         of the memory region described by the tile.
 
@@ -42,7 +42,7 @@ def XeTile_InitTileOp : XeTile_Op<"init_tile", [Pure, AttrSizedOperandSegments]>
 
         The operation takes in the following arguments:
         * source:  Source can be static/dynamic shaped memref or an address (i64)
-        * offsets: 2 offsets into the "source" memref or address at which to
+        * offsets: offsets into the "source" memref or address at which to
                create the tile. offsets can be operands (e.g., [%c0, %c]), attributes
                (e.g., [2, 4]), or mix of operand and attributes (e.g., [%c0, 4] and [2, %c0]).
         * dynamic_offsets : This is a subset of "offsets". offsets can contain both static and dynamic
@@ -389,7 +389,10 @@ def XeTile_TileMMAOp : XeTile_Op<"tile_mma", []> {
     let arguments = (ins
         XeTile_2DOr4DVector: $a,
         XeTile_2DOr4DVector: $b,
-        Optional<XeTile_2DOr4DVector>: $c
+        Optional<XeTile_2DOr4DVector>: $c,
+        OptionalAttr<XeTile_WorkGroupMapAttr>: $wg_map_a,
+        OptionalAttr<XeTile_WorkGroupMapAttr>: $wg_map_b,
+        OptionalAttr<XeTile_WorkGroupMapAttr>: $wg_map_c
     );
 
     let results = (outs XeTile_2DOr4DVector: $output);
@@ -534,7 +537,7 @@ def XeTile_TransposeOp: XeTile_Op<"transpose", []> {
                          DenseI64ArrayAttr:$permutation);
     let results = (outs XeTile_2DOr4DVector: $result);
     let assemblyFormat = [{
-        $vector $permutation attr-dict `:` type($vector) `->` type($result)
+        $vector `,` $permutation attr-dict `:` type($vector) `->` type($result)
     }];
     let hasVerifier = 1;
 }

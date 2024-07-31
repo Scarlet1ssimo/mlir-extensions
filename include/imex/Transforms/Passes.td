@@ -138,6 +138,14 @@ def PropagatePackedLayout : Pass<"imex-propagate-packed-layout"> {
   ];
 }
 
+def RemoveSingleElemVector : Pass<"imex-remove-single-elem-vector"> {
+  let summary = "Remove <1xT> vectors, and replace them with scalars.";
+  let constructor = "imex::createRemoveSingleElemVectorPass()";
+  let dependentDialects = [
+    "::mlir::vector::VectorDialect"
+  ];
+}
+
 def HydrideArith : Pass<"hydride-arith", "::mlir::ModuleOp"> {
   let summary = "Hydride Arith Frontend";
   let constructor = "imex::createHydrideArithPass()";

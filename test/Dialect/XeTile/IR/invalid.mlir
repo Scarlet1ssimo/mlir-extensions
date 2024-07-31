@@ -3,7 +3,7 @@
 // -----
 func.func @init_tile_with_invalid_offsets(%source : memref<64x64xf32>, %offset : index) {
     // the offsets of the init_tile must be 2D
-    // expected-error@+1 {{number of offsets must be 2}}
+    // expected-error@+1 {{number of offsets must equal memref's rank}}
     %1 = xetile.init_tile %source[%offset, %offset, %offset]
         : memref<64x64xf32> -> !xetile.tile<8x8xf32>
 }
@@ -233,7 +233,7 @@ func.func @tile_unpack_invalid_output_shape(%in : vector<4x4x16x16xf16>) {
 // -----
 func.func @test_transpose(%source: vector<8x16xf16>) {
   // expected-error@+1 {{Incorrect transpose permutation}}
-  %1 = xetile.transpose %source [0, 1] : vector<8x16xf16> -> vector<16x8xf16>
+  %1 = xetile.transpose %source, [0, 1] : vector<8x16xf16> -> vector<16x8xf16>
   return
 }
 

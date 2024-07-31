@@ -14,7 +14,6 @@
 ///
 //===----------------------------------------------------------------------===//
 #include "imex/Conversion/GPUToSPIRV/GPUToSPIRVPass.h"
-#include "imex/Conversion/XeGPUToSPIRV/XeGPUToSPIRV.h"
 
 #include "../PassDetail.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -25,6 +24,7 @@
 #include <mlir/Conversion/ControlFlowToSPIRV/ControlFlowToSPIRV.h>
 #include <mlir/Conversion/FuncToSPIRV/FuncToSPIRV.h>
 #include <mlir/Conversion/GPUToSPIRV/GPUToSPIRV.h>
+#include <mlir/Conversion/IndexToSPIRV/IndexToSPIRV.h>
 #include <mlir/Conversion/MathToSPIRV/MathToSPIRV.h>
 #include <mlir/Conversion/MemRefToSPIRV/MemRefToSPIRV.h>
 #include <mlir/Conversion/SCFToSPIRV/SCFToSPIRV.h>
@@ -54,12 +54,8 @@ namespace imex {
 /// 2) Lower the body of the spirv::ModuleOp.
 class GPUXToSPIRVPass : public ::imex::ConvertGPUXToSPIRVBase<GPUXToSPIRVPass> {
 public:
-  explicit GPUXToSPIRVPass(bool mapMemorySpace, bool enableGenISAIntrinsic,
-                           bool enableVCIntrinsic)
-      : mapMemorySpace(mapMemorySpace) {
-    this->enableGenISAIntrinsic = enableGenISAIntrinsic;
-    this->enableVCIntrinsic = enableVCIntrinsic;
-  }
+  explicit GPUXToSPIRVPass(bool mapMemorySpace)
+      : mapMemorySpace(mapMemorySpace) {}
   void runOnOperation() override;
 
 private:
@@ -216,6 +212,14 @@ void populateLLVMCallToSPIRVPatterns(mlir::SPIRVTypeConverter &typeConverter,
   patterns.add<LLVMFuncPattern>(typeConverter, patterns.getContext());
 }
 
+static bool isGenericVectorTy(mlir::Type type) {
+  if (mlir::isa<mlir::spirv::ScalarType>(type))
+    return true;
+  auto vecSize = mlir::dyn_cast<mlir::VectorType>(type).getNumElements();
+  return vecSize == 2 || vecSize == 3 || vecSize == 4 || vecSize == 8 ||
+         vecSize == 16;
+}
+
 void GPUXToSPIRVPass::runOnOperation() {
   mlir::MLIRContext *context = &getContext();
   mlir::ModuleOp module = getOperation();
@@ -269,7 +273,35 @@ void GPUXToSPIRVPass::runOnOperation() {
     llvm::SmallVector<mlir::Operation *, 16> eraseOps;
     gpuModule->walk([&](mlir::gpu::GPUFuncOp fop) {
       fop->walk([&](mlir::arith::BitcastOp bop) {
-        if (bop.getType().isInteger(16)) {
+        if (auto vecTy = llvm::dyn_cast<mlir::VectorType>(bop.getType())) {
+          if (vecTy.getElementType().isInteger(16)) {
+            mlir::arith::TruncFOp inputOp =
+                llvm::dyn_cast<mlir::arith::TruncFOp>(
+                    bop.getOperand().getDefiningOp());
+            if (inputOp) {
+              if (auto inTy =
+                      llvm::dyn_cast<mlir::VectorType>(inputOp.getType())) {
+                if (inTy.getElementType().isBF16()) {
+                  if (auto truncfInTy = llvm::dyn_cast<mlir::VectorType>(
+                          inputOp.getOperand().getType())) {
+                    if (truncfInTy.getElementType().isF32()) {
+                      builder.setInsertionPoint(inputOp);
+                      auto widen =
+                          builder.create<mlir::spirv::INTELConvertFToBF16Op>(
+                              inputOp.getLoc(),
+                              mlir::VectorType::get(truncfInTy.getShape(),
+                                                    builder.getI16Type()),
+                              inputOp.getOperand());
+                      bop->getResult(0).replaceAllUsesWith(widen);
+                      eraseOps.push_back(bop);
+                      eraseOps.push_back(inputOp);
+                    }
+                  }
+                }
+              }
+            }
+          }
+        } else if (bop.getType().isInteger(16)) {
           mlir::arith::TruncFOp inputOp = llvm::dyn_cast<mlir::arith::TruncFOp>(
               bop.getOperand().getDefiningOp());
           if (inputOp) {
@@ -286,7 +318,35 @@ void GPUXToSPIRVPass::runOnOperation() {
         }
       });
       fop->walk([&](mlir::arith::ExtFOp eop) {
-        if (eop.getType().isF32()) {
+        if (auto vecTy = llvm::dyn_cast<mlir::VectorType>(eop.getType())) {
+          if (vecTy.getElementType().isF32()) {
+            mlir::arith::BitcastOp inputOp =
+                llvm::dyn_cast<mlir::arith::BitcastOp>(
+                    eop.getOperand().getDefiningOp());
+            if (inputOp) {
+              if (auto inTy =
+                      llvm::dyn_cast<mlir::VectorType>(inputOp.getType())) {
+                if (inTy.getElementType().isBF16()) {
+                  if (auto bcastInTy = llvm::dyn_cast<mlir::VectorType>(
+                          inputOp.getOperand().getType())) {
+                    if (bcastInTy.getElementType().isInteger(16)) {
+                      builder.setInsertionPoint(inputOp);
+                      auto widen =
+                          builder.create<mlir::spirv::INTELConvertBF16ToFOp>(
+                              inputOp.getLoc(),
+                              mlir::VectorType::get(bcastInTy.getShape(),
+                                                    builder.getF32Type()),
+                              inputOp.getOperand());
+                      eop->getResult(0).replaceAllUsesWith(widen);
+                      eraseOps.push_back(eop);
+                      eraseOps.push_back(inputOp);
+                    }
+                  }
+                }
+              }
+            }
+          }
+        } else if (eop.getType().isF32()) {
           mlir::arith::BitcastOp inputOp =
               llvm::dyn_cast<mlir::arith::BitcastOp>(
                   eop.getOperand().getDefiningOp());
@@ -311,49 +371,6 @@ void GPUXToSPIRVPass::runOnOperation() {
     for (auto eraseOp : eraseOps) {
       eraseOp->erase();
     }
-    target->addIllegalDialect<mlir::xegpu::XeGPUDialect>();
-    // Only one of the following options should be enabled.
-    if (this->enableVCIntrinsic && this->enableGenISAIntrinsic)
-      return signalPassFailure();
-
-    typeConverter.addConversion(
-        [&](mlir::xegpu::TensorDescType type) -> ::mlir::Type {
-          auto i32Type = ::mlir::IntegerType::get(context, 32);
-          return ::mlir::VectorType::get(8, i32Type);
-        });
-    typeConverter.addConversion([&](::mlir::VectorType type) -> ::mlir::Type {
-      // TODO: it looks like needs some improvement for matching upstream
-      // passes
-      unsigned rank = type.getRank();
-      auto elemType = type.getElementType();
-
-      if (llvm::isa<mlir::IndexType>(elemType))
-        elemType = mlir::IntegerType::get(context, 64);
-
-      auto scalarType =
-          llvm::dyn_cast_or_null<mlir::spirv::ScalarType>(elemType);
-      if (!scalarType) {
-        llvm::dbgs() << type
-                     << " illegal: cannot convert non-scalar element type\n";
-        return nullptr;
-      }
-
-      if (rank < 1 || type.getNumElements() == 1)
-        return elemType;
-
-      unsigned sum = 1;
-      for (unsigned i = 0; i < rank; i++) {
-        sum *= type.getShape()[i];
-      }
-
-      return ::mlir::VectorType::get(sum, elemType);
-    });
-
-    typeConverter.addConversion(
-        [&](mlir::xegpu::NbarrierType type) -> ::mlir::Type {
-          auto i32Type = ::mlir::IntegerType::get(context, 32);
-          return mlir::VectorType::get(8, i32Type);
-        });
 
     // SPIR-V elementwise arith/math ops require special handling if the operate
     // on large vectors. We dynamically legalize these ops based on the vector
@@ -362,17 +379,20 @@ void GPUXToSPIRVPass::runOnOperation() {
     // handling.
     target->addDynamicallyLegalOp<mlir::spirv::CLExpOp>(
         [&](mlir::spirv::CLExpOp op) {
-          return imex::isGenericVectorTy(op.getType());
+          return isGenericVectorTy(op.getType());
         });
     target->addDynamicallyLegalOp<mlir::spirv::CLFMaxOp>(
         [&](mlir::spirv::CLFMaxOp op) {
-          return imex::isGenericVectorTy(op.getType());
+          return isGenericVectorTy(op.getType());
         });
 
     //------- Upstream Conversion------------
     mlir::populateGPUToSPIRVPatterns(typeConverter, patterns);
     mlir::arith::populateArithToSPIRVPatterns(typeConverter, patterns);
+    mlir::populateBuiltinFuncToSPIRVPatterns(typeConverter, patterns);
+    mlir::populateVectorToSPIRVPatterns(typeConverter, patterns);
     mlir::populateMathToSPIRVPatterns(typeConverter, patterns);
+    mlir::index::populateIndexToSPIRVPatterns(typeConverter, patterns);
     mlir::populateMemRefToSPIRVPatterns(typeConverter, patterns);
     mlir::populateFuncToSPIRVPatterns(typeConverter, patterns);
     // ---------------------------------------
@@ -385,25 +405,13 @@ void GPUXToSPIRVPass::runOnOperation() {
     imex::populateGPUPrintfToSPIRVPatterns(typeConverter, patterns);
     imex::populateLLVMCallToSPIRVPatterns(typeConverter, patterns);
 
-    if (this->enableVCIntrinsic)
-      imex::populateXeGPUToVCIntrinsicsPatterns(typeConverter, patterns);
-    else if (this->enableGenISAIntrinsic)
-      imex::populateXeGPUToGenISAPatterns(typeConverter, patterns);
-    else
-      module.emitOpError(
-          "'-imex-convert-gpu-to-spirv' pass must be run with one of the "
-          "following options to be 'true': "
-          "'enable-vc-intrinsic', 'enable-joint-matrix', "
-          "'enable-genisa-intrinsic'");
     if (failed(applyFullConversion(gpuModule, *target, std::move(patterns))))
       return signalPassFailure();
   }
 }
 
 std::unique_ptr<::mlir::OperationPass<::mlir::ModuleOp>>
-createConvertGPUXToSPIRVPass(bool mapMemorySpace, bool enableGenISAIntrinsic,
-                             bool enableVCIntrinsic) {
-  return std::make_unique<GPUXToSPIRVPass>(
-      mapMemorySpace, enableGenISAIntrinsic, enableVCIntrinsic);
+createConvertGPUXToSPIRVPass(bool mapMemorySpace) {
+  return std::make_unique<GPUXToSPIRVPass>(mapMemorySpace);
 }
 } // namespace imex

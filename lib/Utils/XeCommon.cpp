@@ -79,6 +79,12 @@ encodeVectorType(mlir::ConversionPatternRewriter &rewriter,
   }
   std::string str;
   switch (size) {
+  case 4:
+    str += "v4";
+    break;
+  case 8:
+    str += "v8";
+    break;
   case 16:
     str += "v16";
     break;
@@ -105,7 +111,7 @@ encodeVectorType(mlir::ConversionPatternRewriter &rewriter,
   if (use64bitData) {
     str += "i64";
     elemType = rewriter.getI64Type();
-  } else if (enforceInteger) {
+  } else if (enforceInteger || elemType == rewriter.getI32Type()) {
     str += "i32";
     elemType = rewriter.getI32Type();
   } else if (elemType == rewriter.getF32Type())
@@ -202,6 +208,20 @@ unsigned encodeOpcode(mlir::arith::AtomicRMWKind kind) {
     break;
   }
   return encode;
+}
+
+/// Creates the default strides for the given `shape`. Example:
+///   input shape = 2x3x4x5
+///   output strides = 60x20x5x1
+llvm::SmallVector<int64_t> defaultStrides(llvm::ArrayRef<int64_t> shape) {
+  int64_t stride = 1;
+  llvm::SmallVector<int64_t> strides;
+  for (int64_t size : llvm::reverse(shape)) {
+    strides.push_back(stride);
+    stride *= size;
+  }
+  std::reverse(strides.begin(), strides.end());
+  return strides;
 }
 
 } // namespace imex

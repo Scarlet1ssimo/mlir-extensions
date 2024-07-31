@@ -71,7 +71,7 @@ parseOptionalAttrDict(mlir::OpAsmParser &parser, mlir::OperationState &result,
     auto loc = parser.getCurrentLocation();
     llvm::StringRef nameId;
     if (parser.parseOptionalKeyword(&nameId, allowedKeys))
-      return parser.emitError(loc, "invalid")
+      return parser.emitError(loc, "invalid ")
              << "attribute keyword: " << nameId << ".\n";
 
     if (parser.parseEqual())
@@ -81,6 +81,18 @@ parseOptionalAttrDict(mlir::OpAsmParser &parser, mlir::OperationState &result,
       return parseAttributeHelper<mlir::DenseI64ArrayAttr>(parser, result,
                                                            nameId);
     if (nameId == "padding") {
+      return parseAttributeHelper<mlir::Attribute>(parser, result, nameId);
+    }
+
+    if (nameId == "wg_map_a") {
+      return parseAttributeHelper<mlir::Attribute>(parser, result, nameId);
+    }
+
+    if (nameId == "wg_map_b") {
+      return parseAttributeHelper<mlir::Attribute>(parser, result, nameId);
+    }
+
+    if (nameId == "wg_map_c") {
       return parseAttributeHelper<mlir::Attribute>(parser, result, nameId);
     }
 
@@ -122,11 +134,18 @@ static int64_t getConstantValue(mlir::Value value) {
 
 mlir::LogicalResult InitTileOp::verify() {
 
-  // number of offsets must be 2 because init_tile creates 2D tiles
-  // dynamic_offsets is always a subset of offsets, so checking this is
-  // sufficient
-  if (getStaticOffsets().size() != 2)
+  // number of offsets must be equal to the memref's rank.
+  if (auto memRefType = mlir::dyn_cast<mlir::MemRefType>(getSourceType())) {
+    if (!memRefType.hasRank())
+      return emitOpError("unranked memref is not supported");
+    if (static_cast<size_t>(memRefType.getRank()) != getStaticOffsets().size())
+      return emitOpError("number of offsets must equal memref's rank");
+  } else if (getStaticOffsets().size() != 2) {
+    // number of offsets must be 2 because init_tile creates 2D tiles
+    // dynamic_offsets is always a subset of offsets, so checking this is
+    // sufficient
     return emitOpError("number of offsets must be 2");
+  }
 
   // if the source is a memref and has static shape, then dynamic shape and
   // strides arguments must not be present
@@ -179,11 +198,14 @@ mlir::LogicalResult InitTileOp::verify() {
     int64_t offset;
     if (mlir::succeeded(
             mlir::getStridesAndOffset(memrefType, strides, offset))) {
-      if (row_major && !((strides[0] == shape[1]) && (strides[1] == 1)))
+      int64_t rank = memrefType.getRank();
+      if (row_major &&
+          !((strides[rank - 2] == shape[rank - 1]) && (strides[rank - 1] == 1)))
         return emitOpError(
             "memref operand is expected to have a row-major layout");
 
-      if (col_major && !((strides[0] == 1) && (strides[1] == shape[0])))
+      if (col_major &&
+          !((strides[rank - 2] == 1) && (strides[rank - 1] == shape[rank - 2])))
         return emitOpError(
             "memref operand is expected to have a column-major layout");
       return mlir::success();
@@ -574,6 +596,11 @@ mlir::ParseResult TileMMAOp::parse(mlir::OpAsmParser &parser,
     }
   }
 
+  // try to parse the optional dictionary attributes
+  if (parseOptionalAttrDict(parser, result,
+                            {"wg_map_a", "wg_map_b", "wg_map_c"}))
+    return mlir::failure();
+
   if (parser.parseColon())
     return mlir::failure();
 
@@ -628,6 +655,24 @@ void TileMMAOp::print(mlir::OpAsmPrinter &printer) {
     printer << ", ";
     printer << getC();
   }
+
+  if (getWgMapA()) {
+    printer << " {wg_map_a =";
+    printer << getWgMapA();
+    printer << ", ";
+    printer << "wg_map_b =";
+    printer << getWgMapB();
+  }
+
+  if (getWgMapC()) {
+    printer << ", ";
+    printer << "wg_map_c =";
+    printer << getWgMapC();
+    printer << "}";
+  } else if (getWgMapA()) {
+    printer << "}";
+  }
+
   printer << " : ";
   printer << getA().getType() << ", ";
   printer << getB().getType();

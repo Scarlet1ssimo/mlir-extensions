@@ -40,7 +40,7 @@ func.func @test_create_nd_tdesc_vc_5(%input: memref<24x32x64xf32>) {
   %c1 = arith.constant 2 : index
   %c8 = arith.constant 8 : index
 
-  // expected-error@+1 {{operand #0 must be 1D/2D memref}}
+  // expected-error@+1 {{Expecting the rank of shape, strides, offsets}}
   %1 = xegpu.create_nd_tdesc %input[%c1, %c1, %c8]
                               : memref<24x32x64xf32> -> !xegpu.tensor_desc<8x16x8xf32>
   return
@@ -64,7 +64,7 @@ func.func @test_load_gather(%src: ui64, %offsets : vector<16xindex>) {
                               : ui64, vector<16xindex> -> !xegpu.tensor_desc<16x8xf16, #xegpu.tdesc_attr<scattered = true>>
 
   // expected-error@+1 {{failed to verify that all of {value, TensorDesc} have same rank}}
-  %2 = xegpu.load %1, %0 {vnni_axis = 0, l1_hint = #xegpu.cache_hint<cached>, l2_hint = #xegpu.cache_hint<uncached>}
+  %2 = xegpu.load %1, %0 {packed, l1_hint = #xegpu.cache_hint<cached>, l2_hint = #xegpu.cache_hint<uncached>}
                           : !xegpu.tensor_desc<16x8xf16, #xegpu.tdesc_attr<scattered = true>>, vector<16x8xi1> -> vector<8x8x4xf16>
   return
 }
