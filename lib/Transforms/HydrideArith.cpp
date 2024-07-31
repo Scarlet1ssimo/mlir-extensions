@@ -671,7 +671,7 @@ protected:
 
     Value src = extractStridedSliceOp.getVector();
 
-    std::string ret_str = "(vector:extract-strided-slice " + MLIRValVisit(src) +
+    std::string ret_str = "(vector:extract_strided_slice " + MLIRValVisit(src) +
                           " " + RosetteOffsetVec + " " + RosetteSliceVec + " " +
                           RosetteStrideVec + " " + ")";
     return ret_str;
