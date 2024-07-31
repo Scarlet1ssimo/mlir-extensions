@@ -12,6 +12,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/SPIRV/IR/SPIRVOps.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 
@@ -29,12 +30,20 @@
 #include "mlir/Support/FileUtilities.h"
 #include "mlir/Transforms/Passes.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/ToolOutputFile.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <queue>
+#include <string>
+
+using llvm::dbgs;
+
+#define DEBUG_TYPE "hydride"
+
+#define DBGS() (dbgs() << '[' << DEBUG_TYPE << ":" << __LINE__ << "] ")
 
 using namespace mlir;
 using namespace imex;
@@ -130,7 +139,10 @@ public:
     }
   }
 
-  std::string define_buffer(const std::string &reg_name, const std::string &id_name, size_t bitwidth, const std::string &elemT, unsigned rank, const std::vector<unsigned> &shape) {
+  std::string define_buffer(const std::string &reg_name,
+                            const std::string &id_name, size_t bitwidth,
+                            const std::string &elemT, unsigned rank,
+                            const std::vector<unsigned> &shape) {
     std::string define_bitvector_str = "(define " + reg_name + "_tensor" + " " +
                                        "(bv 0 (bitvector " +
                                        std::to_string(bitwidth) + ")" + "))";
@@ -159,18 +171,20 @@ public:
     return define_bitvector_str + "\n" + define_buffer_str;
   }
 
-  std::string define_buffer_common(const std::string &reg_name, const std::string &id_name, Type type) {
+  std::string define_buffer_common(const std::string &reg_name,
+                                   const std::string &id_name, Type type) {
     std::string elemT = "'";
     size_t bitwidth = 0;
     unsigned rank = 0;
     std::vector<unsigned> shape;
-
+    DBGS() << type << "\n";
     auto vecType = dyn_cast<VectorType>(type);
     if (vecType && vecType.getElementType()) {
       bitwidth = vecType.getElementTypeBitWidth() * vecType.getNumElements();
       elemT += mlir_type_to_synth_elem(vecType.getElementType(), false, true);
       rank = vecType.getRank();
-      shape = std::vector<unsigned>(vecType.getShape().begin(), vecType.getShape().end());
+      shape = std::vector<unsigned>(vecType.getShape().begin(),
+                                    vecType.getShape().end());
     }
 
     return define_buffer(reg_name, id_name, bitwidth, elemT, rank, shape);
@@ -192,6 +206,7 @@ public:
     auto val = Value::getFromOpaquePointer(val_ptr);
     std::string reg_name = "reg_" + std::to_string(VariableToRegMap[val_ptr]);
     std::string id_name = std::to_string(VariableToRegMap[val_ptr]);
+    DBGS() << "Emit buffer for " << val << "\n";
     return define_buffer_common(reg_name, id_name, val.getType());
   }
 
@@ -358,17 +373,18 @@ struct HydrideArithPass : public HydrideArithBase<HydrideArithPass> {
 
   HydrideArithPass() {
     if (getenv("HYDRIDE_DISABLE_SYNTH")) {
-      llvm::errs() << "Disabling Synthesis... This will lead to linking with old files.\n";
+      DBGS() << "Disabling Synthesis... This will lead to linking with old "
+                "files.\n";
       DisableSynth = true;
     }
     if (getenv("HYDRIDE_DISABLE_LEGALIZE")) {
-      llvm::errs() << "Disabling Synthesis\n";
+      DBGS() << "Disabling Synthesis\n";
       DisableLegalize = true;
     }
     benchmark_name = getenv("HYDRIDE_BENCHMARK");
   }
 
-  explicit HydrideArithPass(std::string synth_target) :HydrideArithPass() {
+  explicit HydrideArithPass(std::string synth_target) : HydrideArithPass() {
     this->synth_target = synth_target;
   }
 
@@ -498,6 +514,23 @@ protected:
     return ret_str;
   }
 
+  std::string visit(arith::ExtSIOp extSIop) {
+    Value a = extSIop.getIn();
+    std::string source = MLIRValVisit(a);
+    if (auto vecType = dyn_cast<VectorType>(extSIop.getResult().getType())) {
+      auto Ty = vecType.getElementType().getIntOrFloatBitWidth();
+      auto lanes = vecType.getNumElements();
+      std::string ret_str = "(arith:cast-int " + source  +
+                            std::to_string(lanes) + " " + std::to_string(Ty) +
+                            ")";
+      return ret_str;
+    }
+    DBGS() << "Unsupported ExtSIOp\n";
+    return "";
+  }
+
+  // TODO:ExtUIOp
+
   std::string visit(arith::CmpIOp cmpOp) {
     Value a = cmpOp.getOperand(0);
     Value b = cmpOp.getOperand(1);
@@ -547,8 +580,8 @@ protected:
       return ret_str;
     }
     }
-    llvm::errs() << "Unsupported Predicate"
-                 << "\n";
+    DBGS() << "Unsupported Predicate"
+           << "\n";
     return "";
   }
 
@@ -845,21 +878,27 @@ void HydrideArithPass::runOnOperation() {
   std::string curr_func_name = benchmark_name;
   // curr_func_name = std::string();
   mainModule->walk([&](gpu::GPUModuleOp mainGPUModule) {
-    llvm::errs() << "*** HydrideArithPass Running on "
-                 << mainGPUModule.getName() << "\n";
+    DBGS() << "*** HydrideArithPass Running on " << mainGPUModule.getName()
+           << "\n";
     // Compute the operation statistics for the currently visited operation.
     mainGPUModule->walk([&](gpu::GPUFuncOp funcOp) {
-      llvm::errs() << "curr_func_name: " << curr_func_name << "\n";
+      DBGS() << "curr_func_name: " << curr_func_name << "\n";
       funcOp.walk([&](Operation *op) {
-        llvm::errs() << *op << "\n";
         if (auto returnOp = dyn_cast<gpu::ReturnOp>(op)) {
           RootExprOp.push(op);
+          DBGS() << "Insert" << *op << "as gpu::ReturnOp\n";
         }
         if (auto storeOp = dyn_cast<vector::StoreOp>(op)) {
           RootExprOp.push(op);
+          DBGS() << "Insert" << *op << "as vector::StoreOp\n";
         }
         if (auto transferWriteOp = dyn_cast<vector::TransferWriteOp>(op)) {
           RootExprOp.push(op);
+          DBGS() << "Insert" << *op << "as vector::TransferWriteOp\n";
+        }
+        if (auto scfYieldOp = dyn_cast<scf::YieldOp>(op)) {
+          RootExprOp.push(op);
+          DBGS() << "Insert" << *op << "as scf::YieldOp\n";
         }
         /* if (auto storeOp = dyn_cast<AffineStoreOp>(op)) {
           RootExprOp.push(op);
@@ -962,11 +1001,48 @@ void HydrideArithPass::runOnOperation() {
 
       //   expr_id++;
       // }
+      if (auto yieldOp = dyn_cast<scf::YieldOp>(op)) {
+        auto valToStore = yieldOp->getOperand(0);
+        auto valToStoreType = valToStore.getType();
+        expr = MLIRValVisit(valToStore);
+        DBGS() << "Emit: " << expr << " recursively...\n";
+        EmitSynthesis(curr_func_name, expr, expr_id);
+        std::vector<Type> arg_types(RegToLoadMap.size() +
+                                    RegToTransferReadMap.size() +
+                                    RegToVariableMap.size());
+        std::vector<Value> args_vec(RegToLoadMap.size() +
+                                    RegToTransferReadMap.size() +
+                                    RegToVariableMap.size());
 
-      if (auto transferWriteOp = dyn_cast<vector::TransferWriteOp>(op)) {
+        for (auto reg : RegToTransferReadMap) {
+          arg_types[reg.first] = reg.second.getVector().getType();
+          args_vec[reg.first] = reg.second;
+        }
+
+        for (auto reg : RegToVariableMap) {
+          auto val = Value::getFromOpaquePointer(reg.second);
+          arg_types[reg.first] = val.getType();
+          args_vec[reg.first] = val;
+        }
+
+        MLIRContext *ctx = yieldOp.getContext();
+        MyPatternRewriter rewriter(ctx);
+
+        FlatSymbolRefAttr sym_ref =
+            getOrInsertHydrideFunc(rewriter, mainGPUModule, expr_id,
+                                   curr_func_name, valToStoreType, arg_types);
+        // get all args in
+        rewriter.setInsertionPoint(yieldOp);
+        Location loc = yieldOp->getLoc();
+        auto callOp = rewriter.create<spirv::FunctionCallOp>(
+            loc, TypeRange(valToStoreType), sym_ref, ValueRange(args_vec));
+        yieldOp->setOperands(0, 1, callOp.getResult(0));
+        expr_id++;
+      } else if (auto transferWriteOp = dyn_cast<vector::TransferWriteOp>(op)) {
         auto valToStore = transferWriteOp.getVector();
         auto valToStoreType = valToStore.getType();
         expr = MLIRValVisit(valToStore);
+        DBGS() << "Emit: " << expr << " recursively...\n";
         EmitSynthesis(curr_func_name, expr, expr_id);
         std::vector<Type> arg_types(RegToLoadMap.size() +
                                     RegToTransferReadMap.size() +
@@ -1003,16 +1079,16 @@ void HydrideArithPass::runOnOperation() {
 
       else {
 
-        if (op->getNumResults() > 0) {
-          if (op->getDialect()->getNamespace() == "arith") {
-            expr = MLIRArithOpVisit(op);
-          } else if (op->getDialect()->getNamespace() == "vector") {
-            expr = MLIRVectorOpVisit(op);
-          } else
-            continue;
-          EmitSynthesis(curr_func_name, expr, expr_id);
-          expr_id++;
-        }
+        // if (op->getNumResults() > 0) {
+        //   if (op->getDialect()->getNamespace() == "arith") {
+        //     expr = MLIRArithOpVisit(op);
+        //   } else if (op->getDialect()->getNamespace() == "vector") {
+        //     expr = MLIRVectorOpVisit(op);
+        //   } else
+        //     continue;
+        //   EmitSynthesis(curr_func_name, expr, expr_id);
+        //   expr_id++;
+        // }
       }
 
       RegToVariableMap.clear();
@@ -1023,12 +1099,12 @@ void HydrideArithPass::runOnOperation() {
       LoadToRegMap.clear();
       RootExprOp.pop();
     }
-    llvm::errs() << *mainGPUModule << "\n";
+    DBGS() << *mainGPUModule << "\n";
   });
-  llvm::errs() << "--------------------------------\n";
-  llvm::errs() << "Hydride Synthesis Complete\n";
+  DBGS() << "--------------------------------\n";
+  DBGS() << "Hydride Synthesis Complete\n";
   EmitLLVMCode();
-  llvm::errs() << *mainModule << "\n";
+  DBGS() << *mainModule << "\n";
 }
 
 FlatSymbolRefAttr HydrideArithPass::getOrInsertHydrideFunc(
@@ -1064,6 +1140,7 @@ FlatSymbolRefAttr HydrideArithPass::getOrInsertHydrideFunc(
 }
 
 std::string HydrideArithPass::MLIRValVisit(Value val) {
+  DBGS() << "Visiting: " << val << "\n";
   void *valAsOpaquePointer = val.getAsOpaquePointer();
   auto valDefiningOp = val.getDefiningOp();
   if (valDefiningOp != NULL) {
@@ -1072,7 +1149,10 @@ std::string HydrideArithPass::MLIRValVisit(Value val) {
         return MLIRArithOpVisit(valDefiningOp);
       } else if (valDefiningOp->getDialect()->getNamespace() == "vector") {
         return MLIRVectorOpVisit(valDefiningOp);
+      } else if (valDefiningOp->getDialect()->getNamespace() == "xegpu") {
+        // TODO:?
       } else {
+        DBGS() << "Unknown Op" << valDefiningOp;
         if (VariableToRegMap.find(valDefiningOp) != VariableToRegMap.end()) {
           std::string reg_name =
               "reg_" + std::to_string(VariableToRegMap[valDefiningOp]);
@@ -1109,6 +1189,7 @@ std::string HydrideArithPass::MLIRValVisit(Value val) {
     RegToVariableMap[reg_counter] = valAsOpaquePointer;
     VariableToRegMap[valAsOpaquePointer] = reg_counter;
 
+    DBGS() << "Assigning: " << reg_name << " to " << val << "\n";
     return reg_name; // op->name;
   }
 
@@ -1199,6 +1280,10 @@ std::string HydrideArithPass::MLIRArithOpVisit(Operation *op) {
     return visit(cmpOp);
   }
 
+  if (auto extOp = dyn_cast<arith::ExtSIOp>(op)) {
+    return visit(extOp);
+  }
+
   for (Value operand : op->getOperands()) {
     if (auto OpOperandRoot = operand.getDefiningOp()) {
       RootExprOp.push(OpOperandRoot);
@@ -1279,9 +1364,11 @@ std::string HydrideArithPass::MLIRVectorOpVisit(Operation *op) {
       }
     }
   }
-
-  if (VariableToRegMap.find(op) != VariableToRegMap.end()) {
-    std::string reg_name = "reg_" + std::to_string(VariableToRegMap[op]);
+  auto val = op->getResult(0);
+  void *valAsOpaquePointer = op->getResult(0).getAsOpaquePointer();
+  if (VariableToRegMap.find(valAsOpaquePointer) != VariableToRegMap.end()) {
+    std::string reg_name =
+        "reg_" + std::to_string(VariableToRegMap[valAsOpaquePointer]);
     return reg_name;
   }
 
@@ -1290,9 +1377,10 @@ std::string HydrideArithPass::MLIRVectorOpVisit(Operation *op) {
 
   std::string reg_name = "reg_" + std::to_string(reg_counter);
 
-  RegToVariableMap[reg_counter] = op;
-  VariableToRegMap[op] = reg_counter;
+  RegToVariableMap[reg_counter] = valAsOpaquePointer;
+  VariableToRegMap[valAsOpaquePointer] = reg_counter;
 
+  DBGS() << "Assigning: " << reg_name << " to " << val << "\n";
   return reg_name; // op->name;
   // return "";
 }
@@ -1319,12 +1407,17 @@ void HydrideArithPass::EmitLLVMCode() {
       "/codegen-generator/tools/low-level-codegen/RoseLowLevelCodeGen.py";
   std::string input_file = "/tmp/" + std::string(benchmark_name) + ".rkt";
   std::string output_file = "/tmp/" + std::string(benchmark_name) + ".ll";
-  // python3 $HYDRIDE_ROOT/codegen-generator/tools/low-level-codegen/RoseLowLevelCodeGen.py /tmp/forward_kernel.rkt $HYDRIDE_ROOT/codegen-generator/tools/low-level-codegen/InstSelectors/visa/build/libVISALegalizer.so $HYDRIDE_ROOT/codegen-generator/tools/low-level-codegen/InstSelectors/visa/visa_wrapper.ll -visa-hydride-legalize /tmp/forward_kernel.ll
-  std::string cmd = "HYDRIDE_VISA_FLAG=1 python3 " + codegen_script_path + " " + input_file + " " +
-                    std::string(legalizer_so) + " " +
+  // python3
+  // $HYDRIDE_ROOT/codegen-generator/tools/low-level-codegen/RoseLowLevelCodeGen.py
+  // /tmp/forward_kernel.rkt
+  // $HYDRIDE_ROOT/codegen-generator/tools/low-level-codegen/InstSelectors/visa/build/libVISALegalizer.so
+  // $HYDRIDE_ROOT/codegen-generator/tools/low-level-codegen/InstSelectors/visa/visa_wrapper.ll
+  // -visa-hydride-legalize /tmp/forward_kernel.ll
+  std::string cmd = "HYDRIDE_VISA_FLAG=1 python3 " + codegen_script_path + " " +
+                    input_file + " " + std::string(legalizer_so) + " " +
                     std::string(intrin_wrapper) + " -visa-hydride-legalize " +
                     output_file;
-  llvm::errs() << "About to execute " << cmd << "\n";
+  DBGS() << "About to execute " << cmd << "\n";
   if (!DisableLegalize) {
     auto start = std::chrono::system_clock::now();
 
@@ -1333,20 +1426,18 @@ void HydrideArithPass::EmitLLVMCode() {
     assert(ret_code == 0 && "Codegeneration crashed, exiting ...");
 
     auto end = std::chrono::system_clock::now();
-    llvm::errs() << "Compilation completed with return code:\t" << ret_code
-                 << "\n";
+    DBGS() << "Compilation completed with return code:\t" << ret_code << "\n";
 
     std::chrono::duration<double> elapsed_seconds = end - start;
 
-    llvm::errs() << "Compilation took " << elapsed_seconds.count()
-                 << " seconds ..."
-                 << "\n";
+    DBGS() << "Compilation took " << elapsed_seconds.count() << " seconds ..."
+           << "\n";
   }
 }
 
 void HydrideArithPass::EmitSynthesis(std::string benchmark_name,
                                      std::string expr, unsigned expr_id) {
-    HydrideSynthEmitter HSE(benchmark_name, LoadToRegMap, VariableToRegMap,
+  HydrideSynthEmitter HSE(benchmark_name, LoadToRegMap, VariableToRegMap,
                           TransferReadToRegMap);
   std::string errorMessage;
   std::string out_str;
@@ -1356,7 +1447,7 @@ void HydrideArithPass::EmitSynthesis(std::string benchmark_name,
 
   auto file = openOutputFile(outputFilename, &errorMessage);
   if (!file) {
-    llvm::errs() << errorMessage << "\n";
+    DBGS() << errorMessage << "\n";
     return;
   }
 
@@ -1417,18 +1508,17 @@ void HydrideArithPass::EmitSynthesis(std::string benchmark_name,
   file->os().close();
 
   std::string cmd = "racket " + outputFilename;
-  llvm::errs() << "About to execute " << cmd << "\n";
-  if(!DisableSynth){
+  DBGS() << "About to execute " << cmd << "\n";
+  if (!DisableSynth) {
     auto start = std::chrono::system_clock::now();
     int ret_code = system(cmd.c_str());
     auto end = std::chrono::system_clock::now();
-    assert(ret_code == 0&& "Synthesis crashed, exiting ...");
-    llvm::errs() << "Synthesis completed with return code:\t" << ret_code << "\n";
+    assert(ret_code == 0 && "Synthesis crashed, exiting ...");
+    DBGS() << "Synthesis completed with return code:\t" << ret_code << "\n";
 
     std::chrono::duration<double> elapsed_seconds = end - start;
-    llvm::errs() << "Synthesis took " << elapsed_seconds.count()
-                 << "seconds ..."
-                 << "\n";
+    DBGS() << "Synthesis took " << elapsed_seconds.count() << "seconds ..."
+           << "\n";
   }
 
   expr_id++;

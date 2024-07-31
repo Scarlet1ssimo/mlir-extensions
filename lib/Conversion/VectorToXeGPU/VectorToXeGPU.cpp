@@ -28,6 +28,13 @@
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/Interfaces/VectorInterfaces.h"
 #include "mlir/Support/LogicalResult.h"
+#include "llvm/Support/Debug.h"
+
+using llvm::dbgs;
+
+#define DEBUG_TYPE "vector-to-xegpu"
+
+#define DBGS() (dbgs() << '[' << DEBUG_TYPE << "] ")
 
 using namespace mlir;
 
@@ -69,30 +76,33 @@ struct TransferReadOpConverter
   using OpRewritePattern::OpRewritePattern;
   LogicalResult matchAndRewrite(vector::TransferReadOp read,
                                 PatternRewriter &rewriter) const override {
+    LLVM_DEBUG(DBGS() << "Candidate TransferRead: " << read << "\n");
     auto ctx = read->getContext();
     auto resultTile = read.getResult();
     auto resTileType = resultTile.getType();
     auto resTileShape = resTileType.getShape();
-    auto rank = resTileType.getRank();
+    auto destRank = resTileType.getRank();
     auto source = read.getSource();
+    auto sourceRank = source.getType().getRank();
 
     ArrayRef<int64_t> loadShape;
-    if (rank == 1)
+    if (sourceRank > 1 && destRank == 1)
       loadShape = {1, resTileShape[0]};
     else
       loadShape = resTileShape;
     auto loadType = VectorType::get(loadShape, resTileType.getElementType());
     auto tDescTy =
         xegpu::TensorDescType::get(loadShape, resTileType.getElementType());
-    mlir::SmallVector<mlir::OpFoldResult> tDescOffsets{read->getOperand(1),
-                                                       read->getOperand(2)};
+    mlir::SmallVector<mlir::OpFoldResult> tDescOffsets{read.getIndices()};
     rewriter.setInsertionPoint(read);
     mlir::Value desc;
     if (auto MemRefTypedSource =
             mlir::cast<mlir::TypedValue<mlir::MemRefType>>(source)) {
       desc = rewriter.create<mlir::xegpu::CreateNdDescOp>(
           read.getLoc(), tDescTy, MemRefTypedSource, tDescOffsets);
+      LLVM_DEBUG(DBGS() << "Descriptor: " << desc << "\n");
     } else {
+      LLVM_DEBUG(DBGS() << "Error: " << __LINE__ << "\n");
       return mlir::failure();
     }
 
@@ -103,19 +113,20 @@ struct TransferReadOpConverter
     auto L1 = mlir::xegpu::CachePolicyAttr::get(ctx, CACHED);
     auto L2 = mlir::xegpu::CachePolicyAttr::get(ctx, CACHED);
     auto L3 = mlir::xegpu::CachePolicyAttr::get(ctx, CACHED);
-    Operation *payload = rewriter.create<xegpu::LoadNdOp>(
+    mlir::Value payload = rewriter.create<xegpu::LoadNdOp>(
         read.getLoc(), loadType, desc, vnniAxisAttr, transposeAttr,
         transposeBitWidthAttr, L1, L2, L3);
-
-    if (rank == 1) {
+    LLVM_DEBUG(DBGS() << "LoadND: " << payload << "\n");
+    if (destRank == 1) {
       // xegpu currently don't support 1d vector load. We need to cast it to 2d
-      auto cast = rewriter.create<vector::ShapeCastOp>(
-          read.getLoc(), resTileType, payload->getResults());
+      payload = rewriter.create<vector::ShapeCastOp>(read.getLoc(), resTileType,
+                                                     payload);
       if (auto map = read.getPermutationMap(); map.isSingleConstant()) {
-        SmallVector<int64_t> mask(resTileShape[0],
-                                  map.getSingleConstantResult());
-        payload =
-            rewriter.create<vector::ShuffleOp>(read.getLoc(), cast, cast, mask);
+        SmallVector<int64_t> mask(
+            resTileShape[0], // FIXME: is it always resTileShape[0]?
+            map.getSingleConstantResult());
+        payload = rewriter.create<vector::ShuffleOp>(read.getLoc(), payload,
+                                                     payload, mask);
       } else {
         AffineExpr d0, d1;
         bindDims(read.getContext(), d0, d1);
@@ -123,13 +134,14 @@ struct TransferReadOpConverter
         // (d0, d1) -> (d1)
         if (map != mp) {
           // Unsupported permutation map
+          LLVM_DEBUG(DBGS()
+                     << "Error: " << __LINE__ << map << " !- " << mp << "\n");
           return ::mlir::failure();
         }
-        payload = cast;
+        // payload = cast;
       }
     }
-    rewriter.replaceOp(read, payload->getResults());
-
+    rewriter.replaceOp(read, payload);
     return ::mlir::success();
   }
 };
@@ -145,27 +157,28 @@ struct TransferWriteOpConverter
   using OpRewritePattern::OpRewritePattern;
   LogicalResult matchAndRewrite(vector::TransferWriteOp write,
                                 PatternRewriter &rewriter) const override {
+    LLVM_DEBUG(DBGS() << "Candidate TransferRead: " << write << "\n");
     auto ctx = write->getContext();
+
     auto resultTile = write->getOperand(0); //%5
     auto source = write.getSource();        // memref<512x640xi32>
     auto resTileType = dyn_cast<VectorType>(resultTile.getType());
     auto resTileShape = resTileType.getShape();
-    auto rank = resTileType.getRank();
+    auto destRank = resTileType.getRank();
     auto intermediateType =
         VectorType::get({1, resTileShape[0]}, resTileType.getElementType());
 
     ArrayRef<int64_t> loadShape;
-    if (rank == 1)
+    if (destRank == 1)
       loadShape = {1, resTileShape[0]};
     else
       loadShape = resTileShape;
     auto tDescTy =
         xegpu::TensorDescType::get(loadShape, resTileType.getElementType());
-    mlir::SmallVector<mlir::OpFoldResult> tDescOffsets{write->getOperand(2),
-                                                       write->getOperand(3)};
+    mlir::SmallVector<mlir::OpFoldResult> tDescOffsets(write.getIndices());
     rewriter.setInsertionPoint(write);
     mlir::Value payload = write.getOperand(0);
-    if (rank == 1) {
+    if (destRank == 1) {
       payload = rewriter.create<vector::ShapeCastOp>(
           write.getLoc(), intermediateType, write->getOperand(0));
     }
@@ -176,8 +189,10 @@ struct TransferWriteOpConverter
           write.getLoc(), tDescTy /*resultTy*/, MemRefTypedSource /*source*/,
           tDescOffsets /*offsets*/);
     } else {
+      LLVM_DEBUG(DBGS() << "Error: " << __LINE__ << "\n");
       return mlir::failure();
     }
+    LLVM_DEBUG(DBGS() << "Descriptor: " << desc << "\n");
 
     auto WRITE_BACK = mlir::xegpu::CachePolicy::WRITE_BACK;
     auto L1 = mlir::xegpu::CachePolicyAttr::get(ctx, WRITE_BACK);

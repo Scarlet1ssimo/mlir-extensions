@@ -21,6 +21,9 @@
 #include "imex/Utils/DebugUtils.h"
 #include "imex/Utils/XeCommon.h"
 
+#define DEBUG_TYPE "xecommon"
+#define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
+
 namespace imex {
 int getOperandIndex(mlir::Operation *op, mlir::Value operand) {
   for (auto [i, value] : llvm::enumerate(op->getOperands())) {
@@ -95,6 +98,7 @@ encodeVectorType(mlir::ConversionPatternRewriter &rewriter,
     str += "v512";
     break;
   default:
+    LLVM_DEBUG(DBGS() << type << ' ' << size << ' ' << use64bitData << "\n");
     assert(0 && "add more support");
     break;
   }
@@ -110,6 +114,9 @@ encodeVectorType(mlir::ConversionPatternRewriter &rewriter,
     str += "i32";
     elemType = rewriter.getI32Type();
   } else if (elemType == rewriter.getBF16Type()) {
+    str += "i32";
+    elemType = rewriter.getI32Type();
+  } else if (elemType == rewriter.getI8Type()) { //?
     str += "i32";
     elemType = rewriter.getI32Type();
   } else if (elemType == rewriter.getI32Type()) {
