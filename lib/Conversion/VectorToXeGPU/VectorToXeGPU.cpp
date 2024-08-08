@@ -107,7 +107,7 @@ struct TransferReadOpConverter
       return mlir::failure();
     }
 
-    mlir::IntegerAttr vnniAxisAttr;
+    mlir::UnitAttr vnniAxisAttr = nullptr;
     mlir::DenseI64ArrayAttr transposeAttr;
     mlir::IntegerAttr transposeBitWidthAttr;
     auto CACHED = mlir::xegpu::CachePolicy::CACHED;

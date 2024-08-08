@@ -206,7 +206,6 @@ public:
     auto val = Value::getFromOpaquePointer(val_ptr);
     std::string reg_name = "reg_" + std::to_string(VariableToRegMap[val_ptr]);
     std::string id_name = std::to_string(VariableToRegMap[val_ptr]);
-    DBGS() << "Emit buffer for " << val << "\n";
     return define_buffer_common(reg_name, id_name, val.getType());
   }
 
@@ -520,7 +519,7 @@ protected:
     if (auto vecType = dyn_cast<VectorType>(extSIop.getResult().getType())) {
       auto Ty = vecType.getElementType().getIntOrFloatBitWidth();
       auto lanes = vecType.getNumElements();
-      std::string ret_str = "(arith:cast-int " + source  +
+      std::string ret_str = "(arith:cast-int " + source +
                             std::to_string(lanes) + " " + std::to_string(Ty) +
                             ")";
       return ret_str;
@@ -580,8 +579,7 @@ protected:
       return ret_str;
     }
     }
-    DBGS() << "Unsupported Predicate"
-           << "\n";
+    DBGS() << "Unsupported Predicate" << "\n";
     return "";
   }
 
@@ -874,6 +872,8 @@ void HydrideArithPass::runOnOperation() {
   // target.addLegalDialect<mlir::LLVMDialect>();
   LLVMTypeConverter typeConverter(&getContext());
   ModuleOp mainModule = getOperation();
+  DBGS() << *mainModule << "\n";
+  DBGS() << "==============Before Hydride================\n";
   unsigned expr_id = 0;
   std::string curr_func_name = benchmark_name;
   // curr_func_name = std::string();
@@ -884,21 +884,23 @@ void HydrideArithPass::runOnOperation() {
     mainGPUModule->walk([&](gpu::GPUFuncOp funcOp) {
       DBGS() << "curr_func_name: " << curr_func_name << "\n";
       funcOp.walk([&](Operation *op) {
-        if (auto returnOp = dyn_cast<gpu::ReturnOp>(op)) {
+        if (auto returnOp = dyn_cast<gpu::ReturnOp>(op);
+            returnOp && returnOp->getNumOperands() > 0) {
           RootExprOp.push(op);
-          DBGS() << "Insert" << *op << "as gpu::ReturnOp\n";
+          DBGS() << "Insert " << *op << " as gpu::ReturnOp\n";
         }
         if (auto storeOp = dyn_cast<vector::StoreOp>(op)) {
           RootExprOp.push(op);
-          DBGS() << "Insert" << *op << "as vector::StoreOp\n";
+          DBGS() << "Insert " << *op << " as vector::StoreOp\n";
         }
         if (auto transferWriteOp = dyn_cast<vector::TransferWriteOp>(op)) {
           RootExprOp.push(op);
-          DBGS() << "Insert" << *op << "as vector::TransferWriteOp\n";
+          DBGS() << "Insert " << *op << " as vector::TransferWriteOp\n";
         }
-        if (auto scfYieldOp = dyn_cast<scf::YieldOp>(op)) {
+        if (auto scfYieldOp = dyn_cast<scf::YieldOp>(op);
+            scfYieldOp && scfYieldOp->getNumOperands() > 0) {
           RootExprOp.push(op);
-          DBGS() << "Insert" << *op << "as scf::YieldOp\n";
+          DBGS() << "Insert " << *op << " as scf::YieldOp\n";
         }
         /* if (auto storeOp = dyn_cast<AffineStoreOp>(op)) {
           RootExprOp.push(op);
@@ -1002,9 +1004,15 @@ void HydrideArithPass::runOnOperation() {
       //   expr_id++;
       // }
       if (auto yieldOp = dyn_cast<scf::YieldOp>(op)) {
+        DBGS() << "Checking: " << yieldOp << "\n";
         auto valToStore = yieldOp->getOperand(0);
         auto valToStoreType = valToStore.getType();
         expr = MLIRValVisit(valToStore);
+        if (StringRef(expr).starts_with("reg_")) {
+          DBGS() << "Empty expr " << expr << "\n";
+          RootExprOp.pop();
+          continue;
+        }
         DBGS() << "Emit: " << expr << " recursively...\n";
         EmitSynthesis(curr_func_name, expr, expr_id);
         std::vector<Type> arg_types(RegToLoadMap.size() +
@@ -1042,6 +1050,11 @@ void HydrideArithPass::runOnOperation() {
         auto valToStore = transferWriteOp.getVector();
         auto valToStoreType = valToStore.getType();
         expr = MLIRValVisit(valToStore);
+        if (StringRef(expr).starts_with("reg_")) {
+          DBGS() << "Empty expr " << expr << "\n";
+          RootExprOp.pop();
+          continue;
+        }
         DBGS() << "Emit: " << expr << " recursively...\n";
         EmitSynthesis(curr_func_name, expr, expr_id);
         std::vector<Type> arg_types(RegToLoadMap.size() +
